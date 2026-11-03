@@ -4,13 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tempProject, type TempProject } from './helpers.ts';
-import { createDraftStore, slug } from '../src/plugin/drafts.ts';
+import { createDraftStore, makeOp, slug, type DraftStore } from '../src/plugin/drafts.ts';
+import { ThreadsError } from '../src/plugin/errors.ts';
 
 let project: TempProject;
 let docsRoot: string;
 let clock = Date.parse('2026-03-10T12:00:00.000Z');
 const store = () => createDraftStore(docsRoot, { now: () => clock });
 const draftsDir = () => path.join(docsRoot, '.threads', 'drafts');
+const append = (s: DraftStore, key: string) => s.transact(key, (j, at) => void j.ops.push(makeOp(addThread, at)));
 const addThread = { kind: 'add-thread', file: 'docs/index.md', threadId: 't-1', commentId: 'c-1', anchor: null, body: 'hi' } as const;
 
 before(() => {
@@ -28,7 +30,7 @@ test('append writes <slug>.json atomically, writes .gitignore once, and git igno
   const key = 'alice smith/1';
   assert.equal(slug(key), 'alice_20smith_2F1');
   const s = store();
-  await s.append(key, addThread);
+  await append(s, key);
   const file = path.join(draftsDir(), 'alice_20smith_2F1.json');
   const journal = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(journal.version, 1);
@@ -39,14 +41,14 @@ test('append writes <slug>.json atomically, writes .gitignore once, and git igno
   assert.equal(fs.readFileSync(ignore, 'utf8'), '*\n!.gitignore\n');
   assert.equal(spawnSync('git', ['check-ignore', '-q', file], { cwd: project.root }).status, 0);
   fs.writeFileSync(ignore, '# operator edit\n');
-  await s.append(key, addThread);
+  await append(s, key);
   assert.equal(fs.readFileSync(ignore, 'utf8'), '# operator edit\n', '.gitignore is written once, never overwritten');
   assert.deepEqual(fs.readdirSync(draftsDir()).filter((f) => f.endsWith('.tmp')), []);
 
 });
 
 test('a journal survives a new store instance', async () => {
-  await store().append('bob', addThread);
+  await append(store(), 'bob');
   const loaded = await store().load('bob');
   assert.deepEqual(loaded.ops.map((o) => o.kind), ['add-thread']);
 });
@@ -71,38 +73,44 @@ test('a missing journal loads fresh with the default mode, without writing', asy
 test('every mutation stamps ops and review.updatedAt from the injected clock', async () => {
   const s = store();
   const tick = () => { clock += 5000; return new Date(clock).toISOString(); };
-  const cases: Array<[string, (op?: string) => Promise<unknown>]> = [
-    ['append', () => s.append('k', addThread)],
-    ['update', (op) => s.update('k', { opId: op!, body: 'changed' })],
+  const cases: Array<[string, () => Promise<unknown>]> = [
+    ['transact add', () => append(s, 'k')],
+    ['transact edit', () => s.transact('k', (j) => { (j.ops[0] as any).body = 'changed'; })],
     ['setMode', () => s.setMode('k', 'auto')],
     ['setReview', () => s.setReview('k', { title: 'T', summary: 'S' })],
-    ['removeOp', (op) => s.removeOp('k', op!)],
+    ['transact remove', () => s.transact('k', (j) => { j.ops = []; })],
   ];
-  let opId = '';
   for (const [name, run] of cases) {
     const expected = tick();
-    await run(opId);
+    await run();
     const j = await s.load('k');
     assert.equal(j.review.updatedAt, expected, name);
-    if (name === 'append') {
-      opId = j.ops[0].opId;
-      assert.equal(j.ops[0].at, expected);
-    }
+    if (name === 'transact add') assert.equal(j.ops[0].at, expected);
   }
   const j = await s.load('k');
   assert.deepEqual([j.mode, j.review.title, j.review.summary, j.ops], ['auto', 'T', 'S', []]);
   assert.equal(j.review.createdAt, '2026-03-10T12:00:05.000Z');
 });
 
-test('update patches an op in place and rejects an unknown opId; clear deletes the file', async () => {
+test('a throwing transact rejects and leaves the journal file untouched', async () => {
   const s = store();
-  const j = await s.append('k', addThread);
-  await s.update('k', { opId: j.ops[0].opId, body: 'new', kind: 'delete-thread' });
-  const after = (await s.load('k')).ops[0] as any;
-  assert.equal(after.body, 'new');
-  assert.equal(after.kind, 'add-thread', 'kind is not patchable');
-  await assert.rejects(s.update('k', { opId: 'o-nope' }), /threads\/not-found/);
+  await append(s, 'k');
+  const file = path.join(draftsDir(), 'k.json');
+  const bytes = fs.readFileSync(file);
+  clock += 5000;
+  await assert.rejects(
+    s.transact('k', (j) => { j.ops = []; throw new ThreadsError('not-found', 'x'); }),
+    /threads\/not-found: x/,
+  );
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.deepEqual(fs.readdirSync(draftsDir()).filter((f) => f.endsWith('.tmp')), []);
+  assert.equal((await s.load('k')).ops.length, 1, 'the store still works after a failed cycle');
+});
+
+test('clear deletes the file and is idempotent', async () => {
+  const s = store();
+  await append(s, 'k');
   await s.clear('k');
   assert.equal(fs.existsSync(path.join(draftsDir(), 'k.json')), false);
-  await s.clear('k'); // idempotent
+  await s.clear('k');
 });

@@ -7,11 +7,6 @@ import type { DraftMode, DraftOp, Journal, NewDraftOp } from '../types.js';
 export interface DraftStore {
   /** The caller's journal; a fresh (unsaved) one when none exists. */
   load(key: string): Promise<Journal>;
-  /** Append an op (the store assigns `opId` and `at`). */
-  append(key: string, op: NewDraftOp): Promise<Journal>;
-  /** Merge fields into an existing op, selected by `patch.opId`. */
-  update(key: string, patch: { opId: string } & Record<string, unknown>): Promise<Journal>;
-  removeOp(key: string, opId: string | string[]): Promise<Journal>;
   /**
    * One locked read-modify-write cycle: `fn` sees the journal and the cycle's
    * timestamp, may change `ops`, and `review.updatedAt` is stamped after it.
@@ -114,22 +109,6 @@ export function createDraftStore(
   return {
     load: (key) => locked(() => read(key)),
     transact: mutate,
-    append: (key, op) =>
-      mutate(key, (j, at) => {
-        j.ops.push(makeOp(op, at));
-      }),
-    update: (key, patch) =>
-      mutate(key, (j) => {
-        const op = j.ops.find((o) => o.opId === patch.opId);
-        if (!op) throw new ThreadsError('not-found', `Draft operation not found: ${patch.opId}`);
-        const { opId: _id, kind: _kind, at: _at, ...fields } = patch as Record<string, unknown>;
-        Object.assign(op, fields);
-      }),
-    removeOp: (key, opId) =>
-      mutate(key, (j) => {
-        const ids = new Set(Array.isArray(opId) ? opId : [opId]);
-        j.ops = j.ops.filter((o) => !ids.has(o.opId));
-      }),
     clear: (key) =>
       locked(async () => {
         try {
