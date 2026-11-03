@@ -14,8 +14,6 @@ interface CommentInfo {
   author: string;
   date: string;
   editedAt: string | null;
-  authorKey: string | null;
-  reviewId: string | null;
 }
 
 function smartDedent(str: string): string {
@@ -191,7 +189,7 @@ export function parseCommentInfo(info: string): CommentInfo {
 
   // Format with ID, optional reply-to, optional edited
   const fullMatch = trimmed.match(
-    /^(\S+)\s+"([^"]+)"\s+"([^"]+)"(?:\s+reply-to\s+(\S+))?(?:\s+edited\s+"([^"]+)")?(?:\s+by\s+(\S+))?(?:\s+review\s+(\S+))?$/
+    /^(\S+)\s+"([^"]+)"\s+"([^"]+)"(?:\s+reply-to\s+(\S+))?(?:\s+edited\s+"([^"]+)")?(?:\s+by\s+\S+)?(?:\s+review\s+\S+)?$/
   );
   if (fullMatch) {
     return {
@@ -200,8 +198,6 @@ export function parseCommentInfo(info: string): CommentInfo {
       date: fullMatch[3],
       parentId: fullMatch[4] || null,
       editedAt: fullMatch[5] || null,
-      authorKey: fullMatch[6] || null,
-      reviewId: fullMatch[7] || null,
     };
   }
 
@@ -216,8 +212,6 @@ export function parseCommentInfo(info: string): CommentInfo {
       author: editedMatch[1],
       date: editedMatch[2],
       editedAt: editedMatch[3],
-      authorKey: null,
-      reviewId: null,
     };
   }
 
@@ -230,12 +224,10 @@ export function parseCommentInfo(info: string): CommentInfo {
       author: simpleMatch[1],
       date: simpleMatch[2],
       editedAt: null,
-      authorKey: null,
-      reviewId: null,
     };
   }
 
-  return { id: null, parentId: null, author: 'unknown', date: '', editedAt: null, authorKey: null, reviewId: null };
+  return { id: null, parentId: null, author: 'unknown', date: '', editedAt: null };
 }
 
 /**

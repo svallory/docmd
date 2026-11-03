@@ -276,8 +276,10 @@ export function parseThreadsFromContent(markdownContent: string): Thread[] {
     const commentContainers = parseChildContainers(tc.contentLines);
     const comments: Comment[] = [];
     let anchor: { quote: string } | undefined;
-    if (commentContainers.length > 0 && commentContainers[0].infoString.trim() === 'anchor') {
-      anchor = { quote: extractBody(commentContainers[0].contentLines) };
+    // An anchor is accepted at any position (the serialiser emits it first).
+    const anchorContainer = commentContainers.find((c) => c.infoString.trim() === 'anchor');
+    if (anchorContainer) {
+      anchor = { quote: extractBody(anchorContainer.contentLines) };
     }
 
     for (const cc of commentContainers) {
