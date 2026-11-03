@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { setup, writeFile, runTestFile, DOCMD } from '../shared.js';
 import { resolveReadDocRoute } from '../../packages/core/dist/commands/mcp.js';
+import { createMcpHandler } from '../../packages/core/dist/mcp/handler.js';
 
 let passed = 0;
 let failed = 0;
@@ -99,6 +100,46 @@ export const test = runTestFile({
       !outside.ok && outside.error === 'Error: Path ".env" is outside the documentation source directory.',
       'rule: outside-source error text matches the contract'
     );
+
+    // In-process handler (AC-30 / AC-27): same project, no spawn.
+    const handler = createMcpHandler({ cwd: dir });
+    const rpc = (id, method, params) => handler.handle({ jsonrpc: '2.0', id, method, params });
+    const toolText = async (id, name, args) => (await rpc(id, 'tools/call', { name, arguments: args })).result.content[0].text;
+
+    const init = await rpc(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    assert(init.result.serverInfo.name === 'docmd-mcp-server', 'handler: initialize serverInfo.name');
+    assert(
+      init.result.protocolVersion === '2025-03-26' &&
+        JSON.stringify(init.result.capabilities) === '{"resources":{},"tools":{},"prompts":{}}',
+      'handler: initialize protocolVersion and capabilities shape'
+    );
+
+    const expectedTools = ['search_docs', 'list_docs', 'read_doc', 'get_config', 'validate_docs', 'get_llms_context'];
+    const listed = (await rpc(2, 'tools/list')).result.tools.map((t) => t.name);
+    assert(JSON.stringify(listed) === JSON.stringify(expectedTools), 'handler: tools/list names match docmd mcp');
+    assert(JSON.stringify(handler.toolNames()) === JSON.stringify(expectedTools), 'handler: toolNames() equals tools/list');
+
+    const resources = (await rpc(3, 'resources/list')).result.resources.map((r) => r.uri);
+    assert(
+      JSON.stringify(resources) === JSON.stringify(['docmd://context/llms.txt', 'docmd://context/skill']),
+      'handler: resources/list URIs'
+    );
+
+    const cfg = JSON.parse(await toolText(4, 'get_config', {}));
+    assert(cfg.title === 'T' && cfg.src === 'docs' && cfg.out === 'site', 'handler: get_config summary has title/src/out');
+
+    const listing = await toolText(5, 'list_docs', {});
+    assert(/^Documentation files \(\d+\):\n/.test(listing) && listing.includes('docs/intro.md'), 'handler: list_docs shape');
+
+    assert((await handler.handle({ jsonrpc: '2.0', method: 'notifications/initialized' })) === null, 'handler: notification returns null');
+    assert((await rpc(6, 'no/such')).error.code === -32601, 'handler: unknown method returns -32601');
+
+    assert(
+      /outside the documentation source directory/.test(await toolText(7, 'read_doc', { route: '.env' })) &&
+        !(await toolText(8, 'read_doc', { route: '.env' })).includes('SECRET'),
+      'handler: read_doc ".env" refused'
+    );
+    assert((await toolText(9, 'read_doc', { route: 'docs/intro.md' })).includes('# Intro content'), 'handler: read_doc "docs/intro.md" returned');
 
     const call = (id, route) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'read_doc', arguments: { route } } });
     const responses = await callMcp(dir, [
