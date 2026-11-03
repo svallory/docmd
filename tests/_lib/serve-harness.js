@@ -20,7 +20,18 @@
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import http from 'node:http';
-import { DOCMD } from '../shared.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DOCMD, writeFile } from '../shared.js';
+
+const FIXTURE_PLUGIN = path.join(import.meta.dirname, '../cli-contracts/fixtures/serve-plugin');
+
+/** Copy the serve-plugin fixture into `<dir>/plugins/serve-plugin` (config key `./plugins/serve-plugin`). */
+export function copyServePlugin(dir) {
+  for (const f of fs.readdirSync(FIXTURE_PLUGIN)) {
+    writeFile(dir, `plugins/serve-plugin/${f}`, fs.readFileSync(path.join(FIXTURE_PLUGIN, f), 'utf8'));
+  }
+}
 
 export function freePort() {
   return new Promise((resolve, reject) => {

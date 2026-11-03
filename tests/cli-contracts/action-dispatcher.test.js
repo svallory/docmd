@@ -162,7 +162,7 @@ export const test = runTestFile({
         assert(hooks.onServerReady.length === 1, 'onServerReady registered with server capability');
         let thrown = '';
         try { await hooks.onServerReady[0]({}); } catch (e) { thrown = e.message; }
-        assert(thrown === 'boom', 'throwing onServerReady rejects to the host');
+        assert(/^onServerReady failed in plugin ".+": boom$/.test(thrown), 'throwing onServerReady rejects to the host, naming the plugin');
         assert(getPluginErrors().some((e) => e.hook === 'onServerReady'), 'throw also recorded in plugin errors');
 
         const warns = [];

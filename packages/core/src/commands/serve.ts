@@ -168,11 +168,18 @@ export async function startServe(
 
   // Actions off: a WebSocket upgrade gets a definite answer. Actions on: the
   // action host owns the upgrade.
+  function startupUpgrade(_req: http.IncomingMessage, socket: import('stream').Duplex): void {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+  }
   const actionsEnabled = config.serve.actions.enabled === true;
   if (!actionsEnabled) {
     server.on('upgrade', (_req, socket) => {
       socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
     });
+  } else {
+    // Until the action host attaches (it removes this listener) an upgrade
+    // gets the same 503 as plain requests instead of a silently dropped socket.
+    server.on('upgrade', startupUpgrade);
   }
 
   // Listen on exactly host:port; no fallback.
@@ -205,6 +212,7 @@ export async function startServe(
   if (actionsEnabled) {
     const rebuild = (files?: string[]) =>
       buildSite(configPathOption, { isDev: false, quiet: true, workerPool, liveServer: true, targetFiles: files });
+    server.off('upgrade', startupUpgrade);
     try {
       actionHost = await createActionHost({
         server,

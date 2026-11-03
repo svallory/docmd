@@ -54,5 +54,5 @@ export async function onServerReady(handle) {
   savedHandle = handle;
   handle.onShutdown(() => globalThis.__serveFixtureShutdown?.());
   if (globalThis.__serveFixtureGate) await globalThis.__serveFixtureGate;
-  if (globalThis.__serveFixtureThrow || process.env.DOCMD_TEST_ONSERVERREADY_THROW === '1') throw new Error('fixture onServerReady failed (serve-plugin)');
+  if (globalThis.__serveFixtureThrow || process.env.DOCMD_TEST_ONSERVERREADY_THROW === '1') throw new Error('fixture onServerReady failed');
 }
