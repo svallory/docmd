@@ -17,7 +17,8 @@ export interface ThreadsOptions {
 }
 
 const bad = (key: string, why: string): never => {
-  throw new ThreadsError('config', `plugins.threads.${key} ${why}`);
+  const where = key ? `plugins.threads.${key}` : 'plugins.threads';
+  throw new ThreadsError('config', `${where} ${why}`);
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -35,6 +36,18 @@ function positiveNumber(obj: Record<string, unknown>, path: string, key: string,
   const v = obj[key] ?? def;
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) bad(`${path}.${key}`, 'must be a positive number');
   return v as number;
+}
+
+function positiveInteger(obj: Record<string, unknown>, path: string, key: string, def: number): number {
+  const v = obj[key] ?? def;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) bad(`${path}.${key}`, 'must be a positive integer');
+  return v as number;
+}
+
+function optionalBoolean(obj: Record<string, unknown>, key: string, def: boolean): boolean {
+  const v = obj[key] ?? def;
+  if (typeof v !== 'boolean') bad(key, 'must be a boolean');
+  return v as boolean;
 }
 
 function nonEmptyString(obj: Record<string, unknown>, path: string, key: string, def?: string): string {
@@ -95,14 +108,14 @@ export function normalizeOptions(rawInput?: unknown): ThreadsOptions {
   }
 
   return {
-    sidebar: raw.sidebar === true,
-    devOnly: raw.devOnly !== false,
+    sidebar: optionalBoolean(raw, 'sidebar', false),
+    devOnly: optionalBoolean(raw, 'devOnly', true),
     identityHeader: identityHeader as string | null,
     autoPublish,
     permissions: { admins: admins as string[], resolve: resolve as 'anyone' | 'author' },
     limits: {
-      maxCommentChars: positiveNumber(lim, 'limits', 'maxCommentChars', 5000),
-      commentsPerMinute: positiveNumber(lim, 'limits', 'commentsPerMinute', 10),
+      maxCommentChars: positiveInteger(lim, 'limits', 'maxCommentChars', 5000),
+      commentsPerMinute: positiveInteger(lim, 'limits', 'commentsPerMinute', 10),
     },
     git,
   };
