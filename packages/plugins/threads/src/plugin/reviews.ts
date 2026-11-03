@@ -441,7 +441,12 @@ export async function publish(
     );
 
     // Drop what was published (ops added meanwhile stay) and start a fresh review.
-    const published = new Set(ops.map((o) => o.opId));
+    // After an earlier publish only what its manifest recorded is done; ops drafted since stay.
+    const published = new Set(
+      earlier?.state === 'published'
+        ? [...earlier.ops.map((o) => o.opId), ...earlier.skipped.map((x) => x.opId)]
+        : ops.map((o) => o.opId),
+    );
     await store.transact(caller.key, (j, at) => {
       j.ops = j.ops.filter((o) => !published.has(o.opId));
       j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };

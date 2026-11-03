@@ -411,11 +411,20 @@ test('a publish whose journal reset fails is finished by the next one without ap
   const manifest = fs.readFileSync(manifestPath(id), 'utf8');
   assert.equal((await real.load('k-alice')).ops.length, 6, 'the journal kept its ops');
 
+  // drafted between the failed reset and the next publish: shares the old review id
+  const late: NewDraftOp = { kind: 'add-comment', file: FILE, threadId: 't-thread3', commentId: 'c-late', parentId: null, body: 'late reply' };
+  await fill('k-alice', [late]);
   const second = await publish(ALICE, ctx(), {}, deps);
   assert.equal(second.reviewId, id);
   assert.deepEqual({ [FILE]: read(FILE), [OTHER]: read(OTHER) }, md);
   assert.equal(fs.readFileSync(manifestPath(id), 'utf8'), manifest);
-  assert.deepEqual((await real.load('k-alice')).ops, []);
+  const left = await real.load('k-alice');
+  assert.deepEqual(left.ops.map((o) => (o as any).commentId), ['c-late'], 'the late op is kept, not dropped');
+  assert.notEqual(left.review.id, id);
+  assert.doesNotMatch(read(FILE), /c-late/);
+  const third = await publish(ALICE, ctx(), {}, deps);
+  assert.match(read(FILE), /c-late/, 'the late op lands with the next publish');
+  assert.deepEqual(JSON.parse(fs.readFileSync(manifestPath(third.reviewId), 'utf8')).ops.map((o: any) => o.commentId), ['c-late']);
   const t2 = parser.parseThreadsFromContent(read(FILE)).find((t) => t.id === 't-thread2')!;
   assert.equal(t2.resolved, true, 'the resolve was not flipped back');
 });
