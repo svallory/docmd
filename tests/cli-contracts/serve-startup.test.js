@@ -36,10 +36,10 @@ function project(name, config) {
   return dir;
 }
 
-async function expectExit1(dir, args) {
+async function expectExit1(dir, args, timeoutMs = 15000) {
   const handle = spawnServe(dir, args);
   try {
-    const r = await exitWithin(handle, 15000);
+    const r = await exitWithin(handle, timeoutMs);
     return { ...r, text: handle.output.text };
   } finally {
     if (handle.child.exitCode === null) { handle.child.kill('SIGKILL'); await handle.exited; }
@@ -57,9 +57,8 @@ export const test = runTestFile({
       await new Promise((r) => blocker.listen(0, '127.0.0.1', r));
       const { port } = blocker.address();
       try {
-        const started = Date.now();
-        const r = await expectExit1(dir, ['--port', String(port)]);
-        assert(r.code === 1 && Date.now() - started <= 5000 + 5000, 'AC-3: port in use exits 1');
+        const r = await expectExit1(dir, ['--port', String(port)], 5000);
+        assert(r.code === 1 && !r.timedOut, 'AC-3: port in use exits 1 within 5 s');
         assert(r.text.includes(String(port)), 'AC-3: output names the port');
         assert(!(await canConnect('127.0.0.1', port + 1)), 'AC-3: nothing listens on port + 1');
       } finally {
