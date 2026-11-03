@@ -13,6 +13,8 @@
 import { setup, writeFile, runTestFile } from '../shared.js';
 import { freePort, canConnect, spawnServe, waitForHealthz, exitWithin } from '../_lib/serve-harness.js';
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 
 let passed = 0;
 let failed = 0;
@@ -89,6 +91,28 @@ export const test = runTestFile({
       });
       const r = await expectExit1(dir, ['--port', String(await freePort())]);
       assert(r.code === 1 && r.text.includes('docmd serve does not support workspaces yet'), 'A-6: workspace root exits 1 with the message');
+    }
+
+    // D9: a throwing onServerReady makes serve exit 1, names the plugin, closes the port.
+    {
+      const dir = project('serve-startup-onready', {});
+      const port = await freePort();
+      const fixtureDir = path.join(import.meta.dirname, 'fixtures/serve-plugin');
+      for (const f of fs.readdirSync(fixtureDir)) writeFile(dir, `plugins/serve-plugin/${f}`, fs.readFileSync(path.join(fixtureDir, f), 'utf8'));
+      writeFile(dir, 'docmd.config.json', JSON.stringify({
+        title: 'T', src: './docs', out: './site',
+        plugins: { './plugins/serve-plugin': {} },
+        serve: { actions: { enabled: true, origins: [`http://127.0.0.1:${port}`] } },
+      }) + '\n');
+      const handle = spawnServe(dir, ['--port', String(port)], { DOCMD_TEST_ONSERVERREADY_THROW: '1' });
+      try {
+        const r = await exitWithin(handle, 15000);
+        assert(r.code === 1 && !r.timedOut, 'D9: a throwing onServerReady exits 1');
+        assert(handle.output.text.includes('serve-plugin'), 'D9: the error names the plugin');
+        assert(!(await canConnect('127.0.0.1', port)), 'D9: nothing listens on the port');
+      } finally {
+        if (handle.child.exitCode === null) { handle.child.kill('SIGKILL'); await handle.exited; }
+      }
     }
 
     // AC-7: SIGINT -> exit 0, port closed.

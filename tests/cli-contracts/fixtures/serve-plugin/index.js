@@ -5,6 +5,7 @@
  * Test knobs (in-process hosts only, via globalThis):
  *   __serveFixtureGate     promise `onServerReady` awaits before resolving
  *   __serveFixtureThrow    when truthy, `onServerReady` throws
+ *   DOCMD_TEST_ONSERVERREADY_THROW=1 (env, spawned commands) does the same
  *   __serveFixtureShutdown called from the handle's onShutdown callback
  */
 import { fileURLToPath } from 'node:url';
@@ -53,5 +54,5 @@ export async function onServerReady(handle) {
   savedHandle = handle;
   handle.onShutdown(() => globalThis.__serveFixtureShutdown?.());
   if (globalThis.__serveFixtureGate) await globalThis.__serveFixtureGate;
-  if (globalThis.__serveFixtureThrow) throw new Error('fixture onServerReady failed');
+  if (globalThis.__serveFixtureThrow || process.env.DOCMD_TEST_ONSERVERREADY_THROW === '1') throw new Error('fixture onServerReady failed (serve-plugin)');
 }
