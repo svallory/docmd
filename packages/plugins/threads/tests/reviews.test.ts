@@ -5,10 +5,11 @@ import path from 'node:path';
 import { tempProject, makeCtx, type TempProject } from './helpers.ts';
 import { actions } from '../src/plugin/actions.ts';
 import { createDraftStore, makeOp } from '../src/plugin/drafts.ts';
-import { applyOps, defaultTitle, pageTitleOf, publish } from '../src/plugin/reviews.ts';
+import { applyOps, defaultTitle, deriveTargets, pageTitleOf, publish } from '../src/plugin/reviews.ts';
 import { createLock, createNoGitSync, type Sync } from '../src/plugin/lock.ts';
 import { ThreadsError } from '../src/plugin/errors.ts';
 import * as parser from '../src/plugin/parser.ts';
+import { overlay } from '../src/plugin/overlay.ts';
 import type { DraftOp, NewDraftOp } from '../src/types.ts';
 
 const AT = '2026-03-10T12:00:00.000Z';
@@ -60,9 +61,13 @@ test('applyOps writes each op kind with tokens and captures before-states', () =
     mk({ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-2', emoji: '🎉' }),
     mk({ kind: 'delete-thread', file: FILE, threadId: 't-1' }),
   ];
-  const { content, applied, skipped } = applyOps(PAGE, ops, OPTS);
+  const { content, applied, skipped } = applyOps(PAGE, ops, { ...OPTS, targets: deriveTargets(PAGE, ops, 'Alice') });
   assert.deepEqual(skipped, []);
   assert.equal(applied.length, 7);
+
+  // The published result matches the draft view (overlay) apart from the draft flag and the review id.
+  const plain = (v: unknown) => JSON.parse(JSON.stringify(v, (k, x) => (k === 'draft' || k === 'reviewId' ? undefined : x)));
+  assert.deepEqual(plain(parser.parseThreadsFromContent(content)), plain(overlay(parser.parseThreadsFromContent(PAGE), ops, FILE, { key: 'k-alice', name: 'Alice' })));
 
   // highlight + anchor + tokens on the new thread; delete-thread unwrapped t-1's mark
   assert.match(content, /==plain target text=={t-new}/);
@@ -103,28 +108,81 @@ test('applyOps skips ops whose target is gone and applies the rest (A-10)', () =
   assert.equal(applyOps(PAGE, [missingThread], OPTS).content, PAGE, 'nothing applied leaves the file byte-identical');
 });
 
-test('replaying ops over their own output changes nothing (C-16)', () => {
+test('replaying ops over their own output changes nothing, for every op kind (C-16)', () => {
   const ops = [
     mk({ kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: { ...quote, quote: 'plain target text' }, body: 'New' }),
     mk({ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-reply', parentId: null, body: 'Reply' }),
     mk({ kind: 'edit-comment', file: FILE, threadId: 't-1', commentId: 'c-2', body: 'Edited' }),
+    mk({ kind: 'resolve-thread', file: FILE, threadId: 't-2' }),
+    mk({ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-2', emoji: '🎉' }),
+    mk({ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-1', emoji: '👍' }),
     mk({ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-1' }),
+    mk({ kind: 'delete-thread', file: FILE, threadId: 't-2' }),
   ];
-  const once = applyOps(PAGE, ops, OPTS);
-  const twice = applyOps(once.content, ops, OPTS);
+  const opts = { ...OPTS, targets: deriveTargets(PAGE, ops, 'Alice') };
+  const once = applyOps(PAGE, ops, opts);
+  const twice = applyOps(once.content, ops, opts);
   assert.equal(twice.content, once.content);
-  assert.deepEqual(twice.applied.map((o) => o.kind), ['edit-comment'], 'only the idempotent edit re-applies; re-adds and the repeated delete are skipped');
+  // without the delete ops the toggles themselves are the replayed part
+  const keep = ops.slice(0, 6);
+  const o2 = { ...OPTS, targets: deriveTargets(PAGE, keep, 'Alice') };
+  const a = applyOps(PAGE, keep, o2);
+  assert.equal(applyOps(a.content, keep, o2).content, a.content);
+  assert.equal(applyOps(a.content, keep, o2).applied.length, keep.length, 'adds count as applied again, nothing is skipped');
 });
 
-test('applyOps on the playground fixture writes the quote highlight and the anchor child', () => {
+test('a new mark never nests in an existing one or the frontmatter; it lands on the next free occurrence', () => {
   const fixture = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'e2e', 'fixtures', 'playground-index.md'), 'utf8');
-  const op = mk({ kind: 'add-thread', file: FILE, threadId: 't-fx', commentId: 'c-fx', anchor: quote, body: 'On the fixture' });
-  const { content } = applyOps(fixture, [op], OPTS);
-  // the first occurrence is already inside t-thread1's mark: wrapping nests, so only the token form is asserted
-  assert.match(content, /==inline discussion threads=={t-fx}/);
-  assert.match(content, /::: comment c-fx "Alice" "2026-03-10" by k-alice review r-00000001/);
-  assert.match(content, /::: anchor\n\s+inline discussion threads\n\s+:::/);
-  assert.deepEqual(parser.parseThreadsFromContent(content).map((t) => t.id), ['t-thread1', 't-thread2', 't-thread3', 't-fx']);
+  const wrap = (content: string, q: string) =>
+    applyOps(content, [mk({ kind: 'add-thread', file: FILE, threadId: 't-fx', commentId: 'c-fx', anchor: { ...quote, quote: q }, body: 'x' })], OPTS).content;
+
+  // the only body occurrence is inside t-thread1's mark: no new mark, the anchor is still written
+  const none = wrap(fixture, 'inline discussion threads');
+  assert.match(none, /==inline discussion threads=={t-thread1}/);
+  assert.doesNotMatch(none, /\{t-fx\}/);
+  assert.equal(parser.parseThreadsFromContent(none).find((t) => t.id === 't-fx')!.anchor!.quote, 'inline discussion threads');
+
+  // a quote that is also in the frontmatter title: the title is left alone
+  assert.equal(wrap(fixture, 'docmd _playground').split('\n')[1], 'title: "docmd _playground"');
+
+  // a free occurrence further down is used, the existing mark survives
+  const more = fixture.replace('Here is another paragraph', 'More about inline discussion threads here. Here is another paragraph');
+  const out = wrap(more, 'inline discussion threads');
+  assert.match(out, /==inline discussion threads=={t-thread1}/);
+  assert.match(out, /More about ==inline discussion threads=={t-fx} here\./);
+});
+
+test('the second branch of every toggle: unresolve, remove own reaction, join another user\'s reaction', () => {
+  const page = `Body.
+
+::: threads
+  ::: thread t-r resolved "Bob" "2026-03-01"
+    ::: comment c-1 "Bob" "2026-03-01"
+      Hi.
+
+      ::: reactions
+        - 👍 Bob
+      :::
+    :::
+  :::
+:::
+`;
+  const run = (name: string, op: NewDraftOp) => {
+    const o = mk(op);
+    return applyOps(page, [o], { authorKey: `k-${name}`, authorName: name, reviewId: 'r-1', targets: deriveTargets(page, [o], name) });
+  };
+  const unresolve = run('Bob', { kind: 'resolve-thread', file: FILE, threadId: 't-r' });
+  assert.deepEqual(unresolve.applied[0].before, { resolved: true, resolved_by: 'Bob', resolved_at: '2026-03-01' });
+  assert.deepEqual(parser.parseThreadsFromContent(unresolve.content)[0].resolved, false);
+
+  const remove = run('Bob', { kind: 'toggle-reaction', file: FILE, threadId: 't-r', commentId: 'c-1', emoji: '👍' });
+  assert.deepEqual(remove.applied[0].before, { present: true });
+  assert.deepEqual(parser.parseThreadsFromContent(remove.content)[0].comments[0].reactions, []);
+  assert.doesNotMatch(remove.content, /👍/);
+
+  const join = run('Alice', { kind: 'toggle-reaction', file: FILE, threadId: 't-r', commentId: 'c-1', emoji: '👍' });
+  assert.deepEqual(join.applied[0].before, { present: false });
+  assert.deepEqual(parser.parseThreadsFromContent(join.content)[0].comments[0].reactions, [{ emoji: '👍', authors: ['Bob', 'Alice'] }]);
 });
 
 test('pageTitleOf prefers frontmatter, then the first heading, else null', () => {
@@ -186,10 +244,11 @@ beforeEach(() => {
 });
 
 const journalOps = (): NewDraftOp[] => [
-  { kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: quote, body: 'New on index' },
+  { kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: { ...quote, quote: 'parser rules here' }, body: 'New on index' },
   { kind: 'add-comment', file: FILE, threadId: 't-thread2', commentId: 'c-rep', parentId: 'c2-1', body: 'Reply' },
   { kind: 'add-thread', file: OTHER, threadId: 't-oth', commentId: 'c-oth', anchor: null, body: 'New on other' },
   { kind: 'edit-comment', file: FILE, threadId: 't-thread2', commentId: 'c-gone', body: 'dangling' },
+  { kind: 'add-comment', file: 'docs/missing.md', threadId: 't-x', commentId: 'c-x', parentId: null, body: 'nowhere' },
 ];
 
 test('publish-review writes K files, the manifest and resets the journal (AC-10, AC-11 .. AC-12)', async () => {
@@ -199,15 +258,16 @@ test('publish-review writes K files, the manifest and resets the journal (AC-10,
 
   assert.match(result.reviewId, /^r-[0-9a-f]{8}$/);
   assert.equal(result.reviewId, before);
-  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped.length, 2);
   assert.match(result.skipped[0].reason, /c-gone/);
+  assert.match(result.skipped[1].reason, /not readable/);
 
   for (const rel of [FILE, OTHER]) {
     const comments = parser.parseThreadsFromContent(read(rel)).flatMap((t) => t.comments).filter((c) => c.reviewId);
     assert.ok(comments.length > 0, rel);
     assert.ok(comments.every((c) => c.authorKey === 'k-alice' && c.reviewId === result.reviewId), rel);
   }
-  assert.match(read(FILE), /==inline discussion threads=={t-new}/);
+  assert.match(read(FILE), /==parser rules here=={t-new}/);
 
   const m = JSON.parse(fs.readFileSync(manifestPath(result.reviewId), 'utf8'));
   assert.deepEqual(
@@ -216,7 +276,7 @@ test('publish-review writes K files, the manifest and resets the journal (AC-10,
   );
   assert.ok(!Number.isNaN(Date.parse(m.publishedAt)));
   assert.equal(m.ops.length, 3);
-  assert.equal(m.ops[0].quote, quote.quote);
+  assert.equal(m.ops[0].quote, 'parser rules here');
   assert.equal(m.ops[2].pageTitle, 'Other Page');
   assert.deepEqual(m.skipped, result.skipped);
 
@@ -232,7 +292,8 @@ test('publish records the injected clock and a default title; empty-review write
   await fill('k-bob', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-b', parentId: null, body: 'Hi' }]);
   const sync = createNoGitSync(createLock());
   const deps = { store: store(), sync, now: () => Date.parse('2030-01-02T03:04:05.000Z'), newId: () => 'r-aaaaaaaa' };
-  const { reviewId } = await publish(BOB, ctx(), { summary: 'S'.repeat(2500) }, deps);
+  await store().setReview('k-bob', { title: 'Stored title' });
+  const { reviewId } = await publish(BOB, ctx(), { title: null, summary: 'S'.repeat(2500) }, deps); // null clears the stored title
   const m = JSON.parse(fs.readFileSync(manifestPath(reviewId), 'utf8'));
   assert.equal(m.publishedAt, '2030-01-02T03:04:05.000Z');
   assert.equal(m.title, 'Comments by Bob: 1 comment on docmd _playground');
@@ -289,4 +350,39 @@ test('two concurrent publishes run one after the other (C-5)', async () => {
   assert.deepEqual(log, ['start:k-alice', 'end:k-alice', 'start:k-bob', 'end:k-bob']);
   const ids = parser.parseThreadsFromContent(read(FILE)).flatMap((t) => t.comments.map((c) => c.id));
   assert.ok(ids.includes('c-a') && ids.includes('c-b'), 'the second publish saw the first one\'s write');
+});
+
+test('a write that fails midway restores the files and keeps the journal; the retry equals a clean publish', async () => {
+  await fill('k-alice', journalOps());
+  const journalFile = path.join(docsRoot, '.threads', 'drafts', 'k-alice.json');
+  const journalBytes = fs.readFileSync(journalFile);
+  const before = { [FILE]: read(FILE), [OTHER]: read(OTHER) };
+  const deps = { store: store(), sync: createNoGitSync(createLock()), now: () => Date.parse('2030-01-02T03:04:05.000Z') };
+
+  let writes = 0;
+  const failing = makeCtx(project.root, {
+    config: { src: 'docs' },
+    async writeFile(rel: string, content: string) {
+      if (++writes === 2) throw new Error('disk full');
+      fs.writeFileSync(path.resolve(project.root, rel), content);
+    },
+  });
+  await assert.rejects(publish(ALICE, failing, {}, deps), /disk full/);
+  assert.equal(read(FILE), before[FILE], 'the file written before the failure is restored');
+  assert.equal(read(OTHER), before[OTHER]);
+  assert.deepEqual(manifests(), []);
+  assert.deepEqual(fs.readFileSync(journalFile), journalBytes);
+
+  const retry = await publish(ALICE, ctx(), {}, deps);
+  const retried = fs.readFileSync(manifestPath(retry.reviewId), 'utf8');
+  const markdown = { [FILE]: read(FILE), [OTHER]: read(OTHER) };
+
+  // clean run from the same starting point
+  project.reset();
+  fs.writeFileSync(path.join(project.root, OTHER), before[OTHER]);
+  fs.rmSync(path.join(docsRoot, '.threads', 'reviews'), { recursive: true, force: true });
+  fs.writeFileSync(journalFile, journalBytes);
+  const clean = await publish(ALICE, ctx(), {}, deps);
+  assert.equal(fs.readFileSync(manifestPath(clean.reviewId), 'utf8'), retried);
+  assert.deepEqual({ [FILE]: read(FILE), [OTHER]: read(OTHER) }, markdown);
 });

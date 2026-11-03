@@ -8,7 +8,7 @@ import { getOptions } from './config.js';
 import { createDraftStore, makeOp, type DraftStore } from './drafts.js';
 import { overlay } from './overlay.js';
 import { findCaller, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
-import { cleanSummary, cleanTitle, defaultSync, listManifests, publish, summarize } from './reviews.js';
+import { defaultSync, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
 import type { Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
 
 interface AuthorsMap {
@@ -306,26 +306,14 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   /** Write the caller's journal into the markdown, record the manifest, reset the journal. */
   'threads:publish-review': async (payload, ctx): Promise<PublishResult> =>
-    publish(resolveCaller(ctx, payload), ctx, reviewFields('threads:publish-review', payload), {
+    publish(resolveCaller(ctx, payload), ctx, parseReviewFields('threads:publish-review', payload), {
       store: getStore(ctx),
       sync: defaultSync(ctx),
     }),
 
   /** Title and summary of the caller's open review. */
   'threads:update-review': async (payload, ctx): Promise<Journal> =>
-    getStore(ctx).setReview(resolveCaller(ctx, payload).key, reviewFields('threads:update-review', payload)),
+    getStore(ctx).setReview(resolveCaller(ctx, payload).key, parseReviewFields('threads:update-review', payload)),
 
   'threads:list-reviews': async (_payload, ctx): Promise<ReviewSummary[]> => (await listManifests(ctx)).map(summarize),
 };
-
-/** Optional `title` / `summary` (string or null) of a review payload, capped. */
-function reviewFields(action: string, payload: any): { title?: string | null; summary?: string | null } {
-  const out: { title?: string | null; summary?: string | null } = {};
-  for (const [field, clean] of [['title', cleanTitle], ['summary', cleanSummary]] as const) {
-    const v = payload?.[field];
-    if (v === undefined) continue;
-    if (v !== null && typeof v !== 'string') throw new ThreadsError('invalid', `${action}: ${field} must be a string`);
-    out[field] = v === null ? null : clean(v);
-  }
-  return out;
-}
