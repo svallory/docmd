@@ -217,3 +217,34 @@ jobs:
             ls -la /tmp/docmd-test/
             exit 1
           fi
+
+      - name: Test serve command and health endpoint
+        run: |
+          # Default command is `docmd serve --host 0.0.0.0`; /docs is empty so the
+          # entrypoint seeds the demo template. /healthz returns 503 while the
+          # initial build runs, so retry until it answers 200.
+          IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:${{ needs.build.outputs.version }}
+          docker run -d --name docmd-serve-test -p 3000:3000 "$IMAGE"
+
+          ok=0
+          for i in $(seq 1 30); do
+            if body=$(curl -fs http://localhost:3000/healthz); then
+              echo "✅ /healthz: $body"
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "❌ /healthz did not answer within 30s"
+            docker logs docmd-serve-test
+            docker stop docmd-serve-test || true
+            exit 1
+          fi
+
+          echo "$body" | grep -q '"status":"ok"'
+          docker stop docmd-serve-test
+          code=$(docker inspect --format='{{.State.ExitCode}}' docmd-serve-test)
+          docker rm docmd-serve-test
+          [ "$code" = "0" ] || { echo "❌ container exited with $code"; exit 1; }
