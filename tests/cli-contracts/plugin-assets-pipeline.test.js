@@ -31,6 +31,8 @@
  *          stateful getAssets hook from returning different files to
  *          different stages of the same build.
  *
+ *   PAA-5  buildSite({ liveServer: true }) keeps requiresLiveServer plugin assets and references docmd-api.js in <body>; plain build omits them and warns.
+ *
  * Uses the built-in @docmd/plugin-search, plugin-git, plugin-mermaid,
  * plugin-math, plugin-openapi as the test subjects because their
  * getAssets hooks cover the full matrix (local-copy src/dest, CDN
@@ -332,11 +334,15 @@ export const test = runTestFile({
       await buildSite(path.join(proj, 'docmd.config.json'), { isDev: false, quiet: true, liveServer: true });
       const html = fs.readFileSync(path.join(proj, 'site/index.html'), 'utf8');
       for (const f of assetFiles) {
-        assert(fs.existsSync(path.join(proj, 'site', f)), `PAA-5: liveServer build emits site/${f}`);
+        // docmd-api.js is copied with the whole UI asset dir in every build, so only its reference is meaningful.
+        if (!f.endsWith('docmd-api.js')) assert(fs.existsSync(path.join(proj, 'site', f)), `PAA-5: liveServer build emits site/${f}`);
         assert(html.includes(f), `PAA-5: liveServer index.html references ${f}`);
       }
       const bodyHtml = html.slice(html.indexOf('<body'));
-      assert(bodyHtml.includes('assets/js/docmd-api.js'), 'PAA-5: docmd-api.js is referenced inside <body>');
+      const headHtml = html.slice(0, html.indexOf('<body'));
+      assert(/<script[^>]+src="[^"]*assets\/js\/docmd-api\.js(?:\?[^"]*)?"/.test(bodyHtml), 'PAA-5: docmd-api.js is a <script src> inside <body>');
+      assert(!headHtml.includes('docmd-api.js'), 'PAA-5: docmd-api.js is not referenced in <head>');
+      assert(bodyHtml.indexOf('docmd-api.js') < bodyHtml.indexOf('assets/js/threads.js'), 'PAA-5: docmd-api.js loads before plugin body scripts');
 
       fs.rmSync(path.join(proj, 'site'), { recursive: true, force: true });
       const plain = build(proj);
@@ -348,6 +354,13 @@ export const test = runTestFile({
         assert(!plainHtml.includes(f), `PAA-5: plain index.html does not reference ${f}`);
       }
       assert(/requires live dev server/.test(plain.output), 'PAA-5: plain build prints the dev-only warning');
+    }
+
+    // PAA-6 (AC-23): the client bridge opens wss:// when served over https.
+    {
+      const src = fs.readFileSync(path.resolve('packages/ui/assets/js/docmd-api.js'), 'utf8');
+      assert(src.includes("window.location.protocol === 'https:' ? 'wss://' : 'ws://'"), 'PAA-6: docmd-api.js picks wss:// under https:');
+      assert(!/new WebSocket\('ws:\/\//.test(src), 'PAA-6: docmd-api.js has no hard-coded ws:// WebSocket');
     }
   }
 });
