@@ -386,3 +386,49 @@ test('a write that fails midway restores the files and keeps the journal; the re
   assert.equal(fs.readFileSync(manifestPath(clean.reviewId), 'utf8'), retried);
   assert.deepEqual({ [FILE]: read(FILE), [OTHER]: read(OTHER) }, markdown);
 });
+
+test('a publish whose journal reset fails is finished by the next one without applying again', async () => {
+  await fill('k-alice', [
+    ...journalOps().slice(0, 3),
+    { kind: 'resolve-thread', file: FILE, threadId: 't-thread2' },
+    { kind: 'toggle-reaction', file: FILE, threadId: 't-thread2', commentId: 'c2-1', emoji: '🎉' },
+    { kind: 'edit-comment', file: FILE, threadId: 't-thread1', commentId: 'c1-1', body: 'Edited once' },
+  ]);
+  const real = store();
+  let fail = true;
+  const flaky = {
+    ...real,
+    transact: (key: string, fn: Parameters<typeof real.transact>[1]) => {
+      if (fail) { fail = false; return Promise.reject(new Error('journal write failed')); }
+      return real.transact(key, fn);
+    },
+  };
+  const deps = { store: flaky, sync: createNoGitSync(createLock()), now: () => Date.parse('2030-01-02T03:04:05.000Z') };
+
+  await assert.rejects(publish(ALICE, ctx(), {}, deps), /journal write failed/);
+  const md = { [FILE]: read(FILE), [OTHER]: read(OTHER) };
+  const id = (await real.load('k-alice')).review.id;
+  const manifest = fs.readFileSync(manifestPath(id), 'utf8');
+  assert.equal((await real.load('k-alice')).ops.length, 6, 'the journal kept its ops');
+
+  const second = await publish(ALICE, ctx(), {}, deps);
+  assert.equal(second.reviewId, id);
+  assert.deepEqual({ [FILE]: read(FILE), [OTHER]: read(OTHER) }, md);
+  assert.equal(fs.readFileSync(manifestPath(id), 'utf8'), manifest);
+  assert.deepEqual((await real.load('k-alice')).ops, []);
+  const t2 = parser.parseThreadsFromContent(read(FILE)).find((t) => t.id === 't-thread2')!;
+  assert.equal(t2.resolved, true, 'the resolve was not flipped back');
+});
+
+test('a failed restore names the files left inconsistent', async () => {
+  await fill('k-alice', journalOps().slice(0, 3));
+  let writes = 0;
+  const broken = makeCtx(project.root, {
+    config: { src: 'docs' },
+    async writeFile(rel: string, content: string) {
+      if (++writes >= 2) throw new Error('disk gone');
+      fs.writeFileSync(path.resolve(project.root, rel), content);
+    },
+  });
+  await assert.rejects(publish(ALICE, broken, {}, { store: store(), sync: createNoGitSync(createLock()) }), /could not be restored.*docs\/index\.md/);
+});

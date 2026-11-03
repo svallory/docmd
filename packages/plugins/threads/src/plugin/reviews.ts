@@ -365,7 +365,14 @@ export async function publish(
     const order = new Map(ops.map((o, i) => [o.opId, i]));
     let skipped: PublishResult['skipped'] = [];
 
-    await sync.publishWithRetry(
+    // An earlier publish of this review wrote its files and manifest but failed to reset the
+    // journal: do not apply again (toggles would flip back), only finish the reset.
+    const earlier = await readManifest(ctx, reviewId);
+    // Toggle targets come from the first read of each file and are reused by any retry of apply.
+    const targetsByFile = new Map<string, Record<string, boolean>>();
+
+    if (earlier?.state === 'published') skipped = earlier.skipped;
+    else await sync.publishWithRetry(
       async () => {
         const applied: ManifestOp[] = [];
         skipped = [];
@@ -381,7 +388,8 @@ export async function publish(
             continue;
           }
           titles[file] = pageTitleOf(content);
-          const targets = deriveTargets(content, fileOps, caller.name);
+          if (!targetsByFile.has(file)) targetsByFile.set(file, deriveTargets(content, fileOps, caller.name));
+          const targets = targetsByFile.get(file)!;
           const result = applyOps(content, fileOps, { authorKey: caller.key, authorName: caller.name, reviewId, targets });
           applied.push(...result.applied);
           skipped.push(...result.skipped);
@@ -412,7 +420,20 @@ export async function publish(
             skipped,
           });
         } catch (e) {
-          for (const r of written.reverse()) await ctx.writeFile(r.file, r.original).catch(() => undefined);
+          const stuck: string[] = [];
+          for (const r of written.reverse()) {
+            try {
+              await ctx.writeFile(r.file, r.original);
+            } catch {
+              stuck.push(r.file);
+            }
+          }
+          if (stuck.length) {
+            throw new ThreadsError(
+              'invalid',
+              `publish failed (${e instanceof Error ? e.message : String(e)}) and these files could not be restored, check them: ${stuck.join(', ')}`,
+            );
+          }
           throw e;
         }
       },

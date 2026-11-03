@@ -31,23 +31,9 @@ export async function cleanThreads(_page: Page): Promise<void> {
   fs.writeFileSync(PLAYGROUND_INDEX, fixtureContent, "utf-8");
 }
 
-/**
- * Publish the open review of `author` (comments are drafts until published).
- * An empty review throws, unless `allowEmpty` (then it resolves null).
- */
-export async function publishReview(
-  page: Page,
-  author = "TestUser",
-  { allowEmpty = false }: { allowEmpty?: boolean } = {},
-): Promise<{ reviewId: string } | null> {
-  return page.evaluate(async ([a, allow]) => {
-    try {
-      return await docmd.call("threads:publish-review", { author: a });
-    } catch (err) {
-      if (allow && String(err instanceof Error ? err.message : err).includes("threads/empty-review")) return null;
-      throw err;
-    }
-  }, [author, allowEmpty] as const);
+/** Publish the open review of `author` (comments are drafts until published); an empty review rejects. */
+export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
+  return page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
 }
 
 /**
