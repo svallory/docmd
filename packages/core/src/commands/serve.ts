@@ -136,6 +136,12 @@ export async function startServe(
   const problems = validateServeConfig(config.serve);
   if (problems.length > 0) failWith(problems.join('\n'), { section: 'Invalid serve configuration' });
 
+  // The MCP handler always loads the default config, so a custom --config would
+  // expose a different src/exclude over /mcp. Refuse rather than leak.
+  if (config.serve.mcp.enabled === true && configPathOption !== 'docmd.config.js') {
+    failWith('serve.mcp requires the default docmd.config.* (do not combine it with --config): the MCP tools read the default config, whose src and exclude may differ.', { section: 'Invalid serve configuration' });
+  }
+
   // 4. Bind address: CLI > env > config > defaults.
   const { host, port } = resolveServeBind({
     cli: { host: opts.host, port: opts.port },
