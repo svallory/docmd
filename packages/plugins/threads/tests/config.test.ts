@@ -39,7 +39,9 @@ test('invalid shapes throw threads/config', () => {
     [{ autoPublish: { seconds: 0 } }, /autoPublish\.seconds/],
     [{ permissions: { resolve: 'nobody' } }, /permissions\.resolve/],
     [{ limits: { maxCommentChars: -1 } }, /limits\.maxCommentChars/],
-    ['nope', /plugins\.threads/],
+    ['nope', /^threads\/config: plugins\.threads must be an object$/],
+    [{ sidebar: 'yes' }, /plugins\.threads\.sidebar/],
+    [{ limits: { commentsPerMinute: 0.5 } }, /limits\.commentsPerMinute/],
   ];
   for (const [raw, naming] of cases) {
     assert.throws(
