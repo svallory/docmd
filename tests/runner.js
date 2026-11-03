@@ -116,6 +116,11 @@ addInProcess(
   await import('./cli-contracts/deploy.test.js')
 );
 addInProcess(
+  'static-server',
+  'Static handler: production serving, path safety, dev wrapper (AC-11..15)',
+  await import('./cli-contracts/static-server.test.js')
+);
+addInProcess(
   'stop',
   'Stop sends SIGTERM and waits for graceful exit (M-11)',
   await import('./cli-contracts/stop.test.js')
