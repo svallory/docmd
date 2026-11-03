@@ -27,3 +27,8 @@ export function resolveCaller(ctx: unknown, payload: Record<string, any> | null 
   if (!caller) throw new ThreadsError('invalid', 'caller identity is required (author)');
   return caller;
 }
+
+/** The explicit profile an `upsert-author` call carries (dev mode); `authorKey` and `name` are required. */
+export function profileFromPayload(payload: Record<string, any>): { key: string; name: string; avatarUrl: string | undefined } {
+  return { key: payload.authorKey, name: payload.name, avatarUrl: payload.avatarUrl };
+}
