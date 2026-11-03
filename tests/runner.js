@@ -263,6 +263,14 @@ addExternal(
   ['./packages/plugins/threads/node_modules/tsx/dist/cli.mjs', '--test', 'packages/plugins/threads/tests/*.test.ts']
 );
 
+// --- Browser bridge --------------------------------------------------------
+addExternal(
+  'ui-bridge',
+  'Browser bridge (docmd-api.js reconnect and reload-once)',
+  'node',
+  ['--test', 'tests/ui/*.test.js']
+);
+
 // --- Section 7: Mermaid plugin --------------------------------------------
 addExternal(
   'mermaid-plugin',
