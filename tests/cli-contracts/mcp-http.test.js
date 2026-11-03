@@ -69,8 +69,8 @@ export const test = runTestFile({
 
     const allowedOrigin = 'http://127.0.0.1:9';
     const handler = createMcpHandler({ cwd: dir });
-    const open = http.createServer((req, res) => { createMcpHttpHandler({ handler, origins: [allowedOrigin] })(req, res); });
-    const closed = http.createServer((req, res) => { createMcpHttpHandler({ handler, origins: [] })(req, res); });
+    const open = http.createServer(createMcpHttpHandler({ handler, origins: [allowedOrigin] }));
+    const closed = http.createServer(createMcpHttpHandler({ handler, origins: [] }));
     const [openPort, closedPort] = await Promise.all([listen(open), listen(closed)]);
 
     try {
@@ -115,8 +115,9 @@ export const test = runTestFile({
       assert((await post(closedPort, init, { Origin: allowedOrigin })).status === 403, 'origins []: any Origin is 403');
       assert((await post(closedPort, init)).status === 200, 'origins []: no Origin is 200');
     } finally {
-      await Promise.all([new Promise((r) => open.close(r)), new Promise((r) => closed.close(r))]);
       open.closeAllConnections?.();
+      closed.closeAllConnections?.();
+      await Promise.all([new Promise((r) => open.close(r)), new Promise((r) => closed.close(r))]);
     }
 
     // Wiring through the real command.
@@ -135,12 +136,20 @@ export const test = runTestFile({
         assert(r.status === 200 && r.json?.result?.serverInfo?.name === 'docmd-mcp-server', 'serve: POST /mcp initialize is 200 with serverInfo.name');
         const g = await request(port, '/mcp', 'GET');
         assert(g.status === 405, 'serve: GET /mcp is 405');
-        const o = await post(port, init, { Origin: 'http://evil.example' });
-        assert(o.status === 403, 'serve: foreign Origin is 403');
+        const o = await post(port, init, { Origin: `http://127.0.0.1:${port}` });
+        assert(o.status === 200, 'serve: Origin from serve.mcp.origins is 200 (the configured list is wired)');
         assert(/MCP\s*:?\s*on/.test(handle.output.text.replace(/\x1b\[[0-9;]*m/g, '')), 'serve: banner shows MCP on');
       } finally {
         await stopServe(handle);
       }
+
+      // A custom --config would make /mcp read a different src/exclude: refuse to start.
+      writeFile(wired, 'other.config.json', JSON.stringify({
+        title: 'T', out: 'site', url: 'https://example.test', serve: { mcp: { enabled: true } },
+      }));
+      const refused = spawnServe(wired, ['--config', 'other.config.json', '--port', String(await freePort())]);
+      const exit = await refused.exited;
+      assert(exit.code !== 0 && /serve\.mcp requires the default/.test(refused.output.text), 'serve: mcp enabled with --config refuses to start');
     }
   }
 });

@@ -39,8 +39,13 @@ function rpcError(code: number, message: string) {
   return { jsonrpc: '2.0', id: null, error: { code, message } };
 }
 
-/** Collect the body; resolves `null` once it exceeds the limit (the rest is discarded). */
-function readBody(req: http.IncomingMessage): Promise<string | null> {
+const ABORTED = Symbol('aborted');
+
+/**
+ * Collect the body. Resolves `null` once it exceeds the limit (the rest is
+ * discarded) and `ABORTED` when the client goes away before the body ends.
+ */
+function readBody(req: http.IncomingMessage): Promise<string | null | typeof ABORTED> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -57,6 +62,7 @@ function readBody(req: http.IncomingMessage): Promise<string | null> {
       chunks.push(chunk);
     });
     req.on('end', () => { if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf-8')); });
+    req.on('close', () => { if (!req.complete) resolve(ABORTED); });
     req.on('error', reject);
   });
 }
@@ -84,7 +90,14 @@ export function createMcpHttpHandler(opts: McpHttpOptions) {
       return;
     }
 
+    if (Number(req.headers['content-length']) > MAX_BODY_BYTES) {
+      req.resume();
+      sendJson(res, 413, rpcError(-32600, 'Request body exceeds 1 MiB'), { Connection: 'close' });
+      return;
+    }
+
     const raw = await readBody(req);
+    if (raw === ABORTED) return;
     if (raw === null) {
       sendJson(res, 413, rpcError(-32600, 'Request body exceeds 1 MiB'), { Connection: 'close' });
       return;
@@ -122,6 +135,7 @@ export function createMcpHttpHandler(opts: McpHttpOptions) {
       }
       sendJson(res, 200, reply);
     } catch (err: any) {
+      // Guards against a future handler that throws; today `handle` never rejects.
       sendJson(res, 500, rpcError(-32603, `Internal error: ${err.message}`));
     }
   };
