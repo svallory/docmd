@@ -125,3 +125,38 @@ export interface WhoAmI {
   identity: Caller | null;
   journal: Journal | null;
 }
+
+/** An applied op as the manifest records it; `before` is what discard needs to reverse it. */
+export type ManifestOp = DraftOp & { before?: unknown; quote?: string; pageTitle?: string };
+
+/** `<docsRoot>/.threads/reviews/<reviewId>.json` (committed). */
+export interface ReviewManifest {
+  version: 1;
+  id: string;
+  authorKey: string;
+  authorName: string;
+  title: string;
+  summary: string | null;
+  state: 'published' | 'discarded';
+  publishedAt: string;
+  discardedAt?: string;
+  discardedBy?: string;
+  ops: ManifestOp[];
+  skipped: Array<{ opId: string; reason: string }>;
+}
+
+/** What the reviews panel lists: a projection of the manifest. */
+export interface ReviewSummary {
+  id: string;
+  authorKey: string;
+  authorName: string;
+  title: string;
+  publishedAt: string;
+  state: 'published' | 'discarded';
+  ops: Array<{ file: string; threadId: string; quote: string | null; pageTitle: string | null }>;
+}
+
+export interface PublishResult {
+  reviewId: string;
+  skipped: Array<{ opId: string; reason: string }>;
+}
