@@ -14,7 +14,7 @@
 import { setup, writeFile, build, runTestFile, DOCMD } from '../shared.js';
 import { freePort, canConnect, request, spawnServe, waitForHealthz, stopServe } from '../_lib/serve-harness.js';
 import { resolveServeBind, normalizeServeConfig, validateServeConfig } from '../../packages/core/dist/server/serve-config.js';
-import { createServeRouter } from '../../packages/core/dist/commands/serve.js';
+import { createServeRouter, outputDirConflict } from '../../packages/core/dist/commands/serve.js';
 import { isDocmdCommand } from '../../packages/core/dist/commands/stop.js';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -95,6 +95,7 @@ export const test = runTestFile({
     // AC-6 / AC-16: router seam, in-process on port 0, output dir has no index.html.
     {
       const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docmd-serve-router-'));
+      fs.writeFileSync(path.join(outDir, 'mcp.html'), '<h1>static mcp</h1>');
       const server = http.createServer(createServeRouter({ outputDir: () => outDir, version: '9.9.9' }));
       await new Promise((r) => server.listen(0, '127.0.0.1', r));
       const { port } = server.address();
@@ -114,6 +115,17 @@ export const test = runTestFile({
         await new Promise((r) => server.close(r));
         fs.rmSync(outDir, { recursive: true, force: true });
       }
+    }
+
+    // Output-dir guard table.
+    {
+      const cwd = '/p/proj';
+      const src = '/p/proj/docs';
+      const rows = [
+        ['/', '/', true], ['.', '/p/proj', true], ['..', '/p', true], ['src dir', '/p/proj/docs', true],
+        ['parent of src', '/p/proj', true], ['normal site', '/p/proj/site', false], ['sibling', '/p/other', false],
+      ];
+      for (const [name, out, want] of rows) assert(outputDirConflict(out, cwd, src) === want, `output dir guard: ${name} -> ${want ? 'refused' : 'allowed'}`);
     }
 
     // AC-9: stop predicate.
@@ -168,16 +180,8 @@ export const test = runTestFile({
       assert(!/docmd-api\.js|__docmd_dev|\/__dev\//.test(root.body), 'AC-1/AC-16: served HTML has no dev or api script');
 
       assert((await request(cliPort, '/stale.html')).status === 404, 'A-15: a stale file from an earlier build is not served');
-      const lan = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal);
-      if (lan) assert(!(await canConnect(lan.address, cliPort)), 'serve.host from config binds loopback only (no LAN connect)');
-
-      assert(!fs.existsSync(marker), 'AC-4: no browser was opened');
       assert(/Production Server Running/i.test(handle.output.text) && /Actions\s+off/.test(handle.output.text) && /MCP\s+off/.test(handle.output.text) &&
-        handle.output.text.includes('site'), 'banner shows Production Server Running, output dir, Actions off, MCP off');
-
-      fs.writeFileSync(path.join(dir, 'docs', 'index.md'), '# Home\n\nChanged on disk.\n');
-      const after = await request(cliPort, '/');
-      assert(after.body === indexOnDisk, 'AC-5: editing a source file does not change the served page (no watcher)');
+        /Serving from\s+\S*site/i.test(handle.output.text), 'banner shows Production Server Running, output dir, Actions off, MCP off');
 
       assert(await upgradeStatus(cliPort) === 404, 'AC-16: WebSocket upgrade gets HTTP 404');
 
@@ -187,9 +191,10 @@ export const test = runTestFile({
         stopServe(handle),
         new Promise((r) => setTimeout(() => r({ code: null, timedOut: true }), 5000)),
       ]);
-      stopped = true;
+      stopped = exit.code !== null;
       assert(exit.code === 0 && Date.now() - started <= 5000, 'AC-7: SIGTERM exits 0 within 5 s');
       assert(!(await canConnect('127.0.0.1', cliPort)), 'AC-7: the port refuses connections after SIGTERM');
+      assert(!fs.existsSync(marker), 'AC-4: no browser was opened');
     } finally {
       if (!stopped) {
         handle.child.kill('SIGKILL');

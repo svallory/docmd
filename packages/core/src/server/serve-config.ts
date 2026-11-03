@@ -28,8 +28,8 @@ export interface ServeConfig {
   mcp: { enabled: boolean; origins: string[] };
 }
 
-export const DEFAULT_SERVE_HOST = '127.0.0.1';
-export const DEFAULT_SERVE_PORT = 3000;
+const DEFAULT_SERVE_HOST = '127.0.0.1';
+const DEFAULT_SERVE_PORT = 3000;
 
 function toOrigins(value: unknown): string[] {
   return Array.isArray(value) ? value.map((v) => String(v)) : [];
@@ -62,9 +62,6 @@ function isValidOrigin(value: string): boolean {
 /** Startup validation. Returns one message per problem; empty means valid. */
 export function validateServeConfig(serve: ServeConfig): string[] {
   const errors: string[] = [];
-  if (!Number.isInteger(serve.port) || serve.port < 0 || serve.port > 65535) {
-    errors.push(`serve.port must be an integer between 0 and 65535 (got ${String(serve.port)}).`);
-  }
   if (serve.actions.enabled && serve.actions.origins.length === 0) {
     errors.push('serve.actions.origins must list at least one origin when serve.actions.enabled is true.');
   }

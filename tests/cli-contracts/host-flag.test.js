@@ -11,6 +11,7 @@
  */
 
 import { setup, writeFile, runTestFile, DOCMD } from '../shared.js';
+import { spawnServe, waitForHealthz, stopServe } from '../_lib/serve-harness.js';
 import { spawn, execFileSync } from 'node:child_process';
 import net from 'node:net';
 import os from 'node:os';
@@ -154,19 +155,9 @@ export const test = runTestFile({
       writeFile(dir, 'docs/index.md', '# Hi\n');
       writeFile(dir, 'docmd.config.json', JSON.stringify({ title: 'Host', src: './docs', out: './site' }, null, 2) + '\n');
       const port = await freePort();
-      const env = { ...process.env };
-      delete env.DOCMD_HOST;
-      delete env.DOCMD_PROJECT_OUT;
-      delete env.PORT;
-      const child = spawn(process.execPath, [DOCMD, 'serve', '--host', '0.0.0.0', '--port', String(port)], {
-        cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe']
-      });
-      const output = { text: '' };
-      child.stdout.on('data', (c) => { output.text += c; });
-      child.stderr.on('data', (c) => { output.text += c; });
-      const exited = new Promise((resolve) => child.once('exit', resolve));
+      const handle = spawnServe(dir, ['--host', '0.0.0.0', '--port', String(port)]);
       try {
-        await waitForHttp(port, child, output);
+        await waitForHealthz(port, handle);
         const lan = lanIPv4();
         if (lan) {
           assert(await canConnect(lan, port), `AC-2: serve --host 0.0.0.0 accepts a connection on ${lan}:${port}`);
@@ -174,8 +165,7 @@ export const test = runTestFile({
           assert(false, 'AC-2: no non-loopback IPv4 interface; cannot verify serve --host binding');
         }
       } finally {
-        child.kill('SIGTERM');
-        await exited;
+        await stopServe(handle);
       }
     }
   }

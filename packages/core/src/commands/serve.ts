@@ -28,7 +28,7 @@ import { resolveServeBind, validateServeConfig } from '../server/serve-config.js
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Graceful shutdown budget; stays below `docmd stop`'s 5 s SIGTERM grace. */
-export const SHUTDOWN_BUDGET_MS = 4000;
+const SHUTDOWN_BUDGET_MS = 4000;
 
 function readVersion(): string {
   try {
@@ -37,6 +37,18 @@ function readVersion(): string {
   } catch {
     return 'unknown';
   }
+}
+
+/**
+ * `true` when clearing `outputDir` would delete the project root or the
+ * source directory (the output dir equals or contains either).
+ */
+export function outputDirConflict(outputDir: string, cwd: string, srcDir: string): boolean {
+  const contains = (a: string, b: string) => {
+    const r = path.relative(a, b);
+    return r === '' || (!r.startsWith('..') && !path.isAbsolute(r));
+  };
+  return contains(outputDir, cwd) || contains(outputDir, srcDir);
 }
 
 export interface ServeRouterOptions {
@@ -120,15 +132,52 @@ export async function startServe(
     config: config.serve,
   });
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    failWith(`Invalid port: ${String(opts.port || process.env.PORT)}. Expected an integer between 0 and 65535.`);
+    const raw = opts.port || process.env.PORT || config.serve.port;
+    failWith(`Invalid port: ${String(raw)}. Expected an integer between 0 and 65535.`);
   }
 
-  // 5. Clear the output dir (no stale files), then build once.
+  // 5. Refuse an output dir whose clearing would delete the project or its sources.
   const outputDir = path.resolve(CWD, config.out || 'site');
-  if (outputDir === CWD || CWD.startsWith(outputDir + path.sep)) {
-    failWith(`Refusing to clear output directory "${outputDir}": it contains the project root.`);
+  const srcDir = path.resolve(CWD, config.src || 'docs');
+  if (outputDirConflict(outputDir, CWD, srcDir)) {
+    failWith(`Refusing to clear output directory "${outputDir}": it contains the project root or the source directory.`);
   }
 
+  // 6. Bind first, so a port already in use fails fast and never touches a
+  // live instance's output. Until the build finishes every request is 503.
+  let ready = false;
+  const route = createServeRouter({ outputDir: () => outputDir, version: readVersion() });
+  const server = http.createServer((req, res) => {
+    if (!ready) {
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '1' });
+      res.end('Service Unavailable: site is building');
+      return;
+    }
+    route(req, res).catch(() => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('500 Server Error');
+      } else {
+        res.destroy();
+      }
+    });
+  });
+
+  // Actions are off: a WebSocket upgrade gets a definite answer.
+  server.on('upgrade', (_req, socket) => {
+    socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+  });
+
+  // Listen on exactly host:port; no fallback.
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      exitWithError(new Error(`Port ${port} is already in use on ${host}.`), { section: 'Failed to start server' });
+    }
+    exitWithError(err, { section: 'Failed to start server' });
+  });
+  await new Promise<void>((resolve) => server.listen(port, host, resolve));
+
+  // 7. Clear the output dir (no stale files), then build once.
   const elapsed = TUI.timer();
   const workerScript = path.resolve(__dirname, '../engine/worker-parser.js');
   const workerConfig = { ...config };
@@ -142,42 +191,17 @@ export async function startServe(
     exitWithError(e, { section: 'Build failed' });
   }
   TUI.info(`Build completed in ${elapsed()}.`);
+  ready = true;
 
-  // 6. Server.
-  const route = createServeRouter({ outputDir: () => outputDir, version: readVersion() });
-  const server = http.createServer((req, res) => {
-    route(req, res).catch(() => {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('500 Server Error');
-      } else {
-        res.destroy();
-      }
-    });
-  });
-
-  // 7. Actions are off: a WebSocket upgrade gets a definite answer.
-  server.on('upgrade', (_req, socket) => {
-    socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
-  });
-
-  // 8. Listen on exactly host:port; no fallback.
-  server.on('error', (err: any) => {
-    if (err.code === 'EADDRINUSE') {
-      exitWithError(new Error(`Port ${port} is already in use on ${host}.`), { section: 'Failed to start server' });
-    }
-    exitWithError(err, { section: 'Failed to start server' });
-  });
-  await new Promise<void>((resolve) => server.listen(port, host, resolve));
-
-  // 9. Banner.
+  // 8. Banner.
   const boundPort = (server.address() as any)?.port ?? port;
-  const loopbackOnly = host === '127.0.0.1' || host === 'localhost' || host === '::1';
   const anyHost = host === '0.0.0.0' || host === '::';
+  const urlHost = (h: string) => (h.includes(':') ? `[${h}]` : h);
+  const localHost = anyHost || host === '127.0.0.1' ? '127.0.0.1' : urlHost(host);
   const networkIp = anyHost ? getNetworkIp() : null;
   TUI.section('Production Server Running', TUI.green);
   TUI.item('', '', TUI.dim, TUI.green);
-  TUI.item('Local Access', `http://${anyHost || loopbackOnly ? '127.0.0.1' : host}:${boundPort}`, TUI.bold, TUI.green);
+  TUI.item('Local Access', `http://${localHost}:${boundPort}`, TUI.bold, TUI.green);
   if (networkIp) TUI.item('Network Access', `http://${networkIp}:${boundPort}`, TUI.bold, TUI.green);
   TUI.item('Serving from', formatPathForDisplay(outputDir, CWD), TUI.dim, TUI.green);
   TUI.item('Actions', 'off', TUI.dim, TUI.green);
@@ -185,16 +209,20 @@ export async function startServe(
   TUI.item('', '', TUI.dim, TUI.green);
   TUI.footer(TUI.green);
 
-  // 10. Graceful shutdown.
+  // 9. Graceful shutdown.
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    setTimeout(() => process.exit(exitCodeFor(new Error('shutdown timed out'))), SHUTDOWN_BUDGET_MS).unref();
+    // In-flight requests may finish within the budget; whatever is left is cut.
+    setTimeout(() => {
+      server.closeAllConnections?.();
+      process.exit(exitCodeFor(new Error('shutdown timed out')));
+    }, SHUTDOWN_BUDGET_MS).unref();
     try {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
-        server.closeAllConnections?.();
+        server.closeIdleConnections?.();
       });
       await workerPool.terminateAll();
     } catch {
