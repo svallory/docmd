@@ -46,8 +46,8 @@ export const MIME_TYPES: Record<string, string> = {
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
 export interface StaticHandlerOptions {
-  /** Root directory, or a getter (dev swaps the output dir on config reload). */
-  rootDir: string | (() => string);
+  /** Root directory getter (dev swaps the output dir on config reload). */
+  rootDir: () => string;
   /** Rewrite HTML before it is sent (200 pages and the custom 404 page). */
   transformHtml?: (html: string, req: IncomingMessage) => string;
   /** Text shown at the bottom of the built-in 404 page. */
@@ -72,8 +72,8 @@ function matchesEtag(header: string | string[] | undefined, etag: string): boole
   if (!header) return false;
   const raw = Array.isArray(header) ? header.join(',') : header;
   return raw.split(',').some((t) => {
-    const tag = t.trim();
-    return tag === '*' || tag === etag;
+    const tag = t.trim().replace(/^W\//, '');
+    return tag === '*' || tag === etag.replace(/^W\//, '');
   });
 }
 
@@ -81,8 +81,6 @@ function matchesEtag(header: string | string[] | undefined, etag: string): boole
  * Create a request handler that serves static files from `rootDir`.
  */
 export function createStaticHandler(opts: StaticHandlerOptions) {
-  const getRoot = () => (typeof opts.rootDir === 'function' ? opts.rootDir() : opts.rootDir);
-
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const isHead = req.method === 'HEAD';
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -94,9 +92,12 @@ export function createStaticHandler(opts: StaticHandlerOptions) {
 
     // Split the raw request target ourselves: `new URL()` would collapse
     // `/../x` to `/x` and hide the traversal attempt from safePath().
-    const rawPath = (req.url || '/').split(/[?#]/)[0] || '/';
+    // Absolute-form targets (`GET http://host/page`) are reduced to their pathname.
+    let rawPath = '/';
     let pathname: string;
     try {
+      const target = req.url || '/';
+      rawPath = target.startsWith('/') ? target.split(/[?#]/)[0] : new URL(target).pathname;
       pathname = decodeURIComponent(rawPath);
     } catch {
       send(400, { 'Content-Type': 'text/plain; charset=utf-8' }, 'Bad Request');
@@ -105,11 +106,16 @@ export function createStaticHandler(opts: StaticHandlerOptions) {
 
     const extra = opts.extraRoutes?.[rawPath];
     if (extra) {
-      await extra(req, res);
+      try {
+        await extra(req, res);
+      } catch {
+        if (!res.headersSent) send(500, { 'Content-Type': 'text/plain; charset=utf-8' }, '500 Server Error');
+        else res.destroy();
+      }
       return;
     }
 
-    const rootDir = getRoot();
+    const rootDir = opts.rootDir();
     const rootAbs = path.resolve(rootDir);
     // Security (Phase 1.A: CWE-22 fix). Use safePath() to enforce the boundary.
     //
@@ -163,7 +169,10 @@ export function createStaticHandler(opts: StaticHandlerOptions) {
 
       const ext = path.extname(filePath).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      const etag = `W/"${stats.size}-${stats.mtimeMs}"`;
+      // Transformed HTML differs from the file on disk, so it gets its own
+      // validator (a dev-served page must never 304 a prod request, or vice versa).
+      const transformed = contentType === 'text/html' && !!opts.transformHtml;
+      const etag = `W/"${stats.size}-${stats.mtimeMs}${transformed ? '-t' : ''}"`;
       const baseHeaders = { 'Content-Type': contentType, 'Cache-Control': 'no-cache', 'ETag': etag };
 
       if (matchesEtag(req.headers['if-none-match'], etag)) {
@@ -173,8 +182,8 @@ export function createStaticHandler(opts: StaticHandlerOptions) {
 
       const content = await fs.readFile(filePath);
       let body: string | Buffer = content;
-      if (contentType === 'text/html' && opts.transformHtml) {
-        body = opts.transformHtml(content.toString('utf-8'), req);
+      if (transformed) {
+        body = opts.transformHtml!(content.toString('utf-8'), req);
       }
       send(200, { ...baseHeaders, 'Content-Length': Buffer.byteLength(body) }, body);
     } catch (err: any) {

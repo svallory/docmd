@@ -10,6 +10,7 @@
  */
 
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { setup, writeFile, runTestFile } from '../shared.js';
 import { createStaticHandler } from '../../packages/core/dist/server/static.js';
@@ -53,6 +54,18 @@ function request(server, method, reqPath, headers = {}) {
   });
 }
 
+function rawHead(server, reqPath) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const sock = net.connect(server.address().port, '127.0.0.1', () => {
+      sock.write(`HEAD ${reqPath} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    });
+    sock.on('data', (c) => chunks.push(c));
+    sock.on('end', () => resolve(Buffer.concat(chunks)));
+    sock.on('error', reject);
+  });
+}
+
 const MIME_TABLE = [
   ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['webp', 'image/webp'], ['avif', 'image/avif'],
   ['xml', 'application/xml'], ['wasm', 'application/wasm'], ['mjs', 'text/javascript'],
@@ -76,9 +89,12 @@ export const test = runTestFile({
     writeFile(base, 'site-private/secret.txt', 'SECRET');
     writeFile(bare, 'index.html', '<html><body>bare</body></html>');
 
-    const prod = await listen(createStaticHandler({ rootDir: site }));
-    const prodBare = await listen(createStaticHandler({ rootDir: () => bare }));
-    const dev = await listen((req, res) => serveStatic(req, res, site));
+    // Two servers; the `x-root: bare` test header picks the root without a second server.
+    const handlers = { site: createStaticHandler({ rootDir: () => site }), bare: createStaticHandler({ rootDir: () => bare }),
+      boom: createStaticHandler({ rootDir: () => site, extraRoutes: { '/boom': () => { throw new Error('boom'); } } }) };
+    const prod = await listen((req, res) => handlers[req.headers['x-root'] || 'site'](req, res));
+    const dev = await listen((req, res) => serveStatic(req, res, req.headers['x-root'] === 'bare' ? bare : site));
+    const BARE = { 'x-root': 'bare' };
 
     try {
       // AC-11: caching + nosniff
@@ -105,7 +121,7 @@ export const test = runTestFile({
 
       // AC-13: 404 / redirect / index / extensionless
       assert(missing.status === 404 && missing.body.toString() === html404, 'AC-13: 404 body is byte-equal to 404.html');
-      const plain = await request(prodBare, 'GET', '/nope');
+      const plain = await request(prod, 'GET', '/nope', BARE);
       assert(plain.status === 404 && !/dev server/i.test(plain.body.toString()), 'AC-13: plain 404 without 404.html has no "dev server"');
       assert(redirect.status === 301 && redirect.headers['location'] === '/dir/', 'AC-13: /dir redirects to /dir/');
       assert((await request(prod, 'GET', '/dir/')).body.toString().includes('dir index'), 'AC-13: /dir/ serves dir/index.html');
@@ -117,9 +133,17 @@ export const test = runTestFile({
         assert(r.headers['content-type'] === expected, `AC-14: .${ext} is ${expected} (got ${r.headers['content-type']})`);
       }
 
+      // A throwing extraRoute becomes a 500, not an unhandled rejection
+      const boom = await request(prod, 'GET', '/boom', { 'x-root': 'boom' });
+      assert(boom.status === 500, 'extraRoutes: a throwing handler answers 500');
+
       // HEAD mirrors GET
       const head = await request(prod, 'HEAD', '/page');
-      assert(head.status === ok.status && head.body.length === 0, 'HEAD: same status, empty body');
+      assert(head.status === ok.status, 'HEAD: same status as GET');
+      // Raw socket: Node's client discards HEAD bodies, so read the wire ourselves.
+      const wire = await rawHead(prod, '/page');
+      const sep = wire.indexOf('\r\n\r\n');
+      assert(sep > 0 && wire.length - (sep + 4) === 0, 'HEAD: zero body bytes on the wire');
       assert(['content-type', 'etag', 'cache-control', 'x-content-type-options', 'content-length']
         .every((h) => head.headers[h] === ok.headers[h]), 'HEAD: same headers as GET');
 
@@ -128,18 +152,20 @@ export const test = runTestFile({
       assert(devPage.includes('window.__docmd_dev') && devPage.includes('<script src="/__dev/docmd-api.js">'), 'AC-15: dev injects __docmd_dev and the api script tag');
       const api = await request(dev, 'GET', '/__dev/docmd-api.js');
       assert(api.status === 200 && /javascript/.test(api.headers['content-type']), 'AC-15: /__dev/docmd-api.js is 200 JavaScript');
+      assert(api.headers['cache-control'] === 'no-cache', 'AC-15: /__dev/docmd-api.js sends no-cache');
       assert((await request(dev, 'GET', '/')).headers['cache-control'] === 'no-cache', 'AC-15: dev sends no-cache');
-      const devBare = http.createServer((req, res) => serveStatic(req, res, bare));
-      await new Promise((r) => devBare.listen(0, '127.0.0.1', r));
-      try {
-        const d404 = await request(devBare, 'GET', '/nope');
-        assert(d404.status === 404 && d404.body.toString().includes('docmd dev server'), 'AC-15: dev 404 mentions "docmd dev server"');
-      } finally {
-        devBare.close();
-      }
+      const d404 = await request(dev, 'GET', '/nope', BARE);
+      assert(d404.status === 404 && d404.body.toString().includes('docmd dev server'), 'AC-15: dev 404 mentions "docmd dev server"');
+      const devEtag = (await request(dev, 'GET', '/page')).headers['etag'];
+      assert(devEtag && devEtag !== etag, 'ETag: dev-transformed HTML has a different ETag than prod');
+      const devNoMatch = await request(dev, 'GET', '/page', { 'If-None-Match': etag });
+      assert(devNoMatch.status === 200, 'ETag: a prod ETag does not 304 a dev-transformed page');
+      const weak = await request(prod, 'GET', '/page', { 'If-None-Match': etag.replace(/^W\//, '') });
+      assert(weak.status === 304, 'ETag: If-None-Match uses weak comparison');
+      const absForm = await request(prod, 'GET', 'http://localhost/page');
+      assert(absForm.status === 200 && absForm.body.toString().includes('page'), 'absolute-form request target is served');
     } finally {
       prod.close();
-      prodBare.close();
       dev.close();
     }
   }
