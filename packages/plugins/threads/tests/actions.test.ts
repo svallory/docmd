@@ -246,6 +246,17 @@ test('input validation rejects missing fields', async () => {
   await rejects('threads:get-threads', {}, 'file is required');
 });
 
+test('lookup and validation failures carry the threads/<code> prefix', async () => {
+  project.reset(); // the fixture's own threads, so t-thread1 exists
+  const rejects = (name: string, payload: Record<string, unknown>, msg: string) =>
+    assert.rejects(call(name, payload), (e: Error) => e.message === msg);
+  await rejects('threads:get-threads', {}, 'threads/invalid: threads:get-threads: file is required');
+  await rejects('threads:edit-comment', { file: project.file, threadId: 't-nope', commentId: 'c-1', body: 'x' },
+    'threads/not-found: Thread not found: t-nope');
+  await rejects('threads:edit-comment', { file: project.file, threadId: 't-thread1', commentId: 'c-nope', body: 'x' },
+    'threads/not-found: Comment not found: c-nope');
+});
+
 test('plugin surface: descriptor, hooks and action names', () => {
   assert.equal(plugin.plugin.name, 'threads');
   assert.ok(plugin.plugin.capabilities?.includes('actions'));
@@ -258,5 +269,7 @@ test('plugin surface: descriptor, hooks and action names', () => {
     assert.equal(typeof plugin.actions[`threads:${name}`], 'function', name);
   }
   const assets = plugin.getAssets();
+  const scripts = plugin.generateScripts({ src: path.join(project.root, 'docs') }, { sidebar: true });
+  assert.ok(scripts.bodyScriptsHtml.includes('"sidebar":true'));
   assert.deepEqual(assets.map((a: any) => a.dest), ['assets/js/threads.js', 'assets/css/threads.css']);
 });
