@@ -27,6 +27,8 @@ export interface PublishMeta {
  * How a publish reaches the outside world. `withLock` serialises repository
  * mutations; `publishWithRetry` runs `apply` (which may run more than once
  * when an implementation retries, so it must start from scratch each time).
+ * An implementation that retries must return the files to their pre-apply state
+ * before calling `apply` again: apply reads the files it rewrites.
  */
 export interface Sync {
   withLock<T>(fn: () => Promise<T>): Promise<T>;
