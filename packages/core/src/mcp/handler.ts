@@ -169,7 +169,7 @@ export function resolveReadDocRoute(
 
 // excludePatterns is forwarded from config.exclude so that validate_docs
 // honours the same file set that the build produces.
-export function validateLinks(docsDir: string, excludePatterns: string[] = []): { file: string; line: number; link: string; error: string }[] {
+export function validateLinks(docsDir: string, excludePatterns: string[] = [], root: string = process.cwd()): { file: string; line: number; link: string; error: string }[] {
   const errors: { file: string; line: number; link: string; error: string }[] = [];
   if (!fs.existsSync(docsDir)) return errors;
 
@@ -179,7 +179,7 @@ export function validateLinks(docsDir: string, excludePatterns: string[] = []): 
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const lines = content.split('\n');
-      const relativeFile = path.relative(process.cwd(), filePath);
+      const relativeFile = path.relative(root, filePath);
 
       let inFence = false;
       let fenceChar = '';
@@ -275,7 +275,7 @@ export function validateLinks(docsDir: string, excludePatterns: string[] = []): 
           // is also valid when the file exists there.
           const existsInRootAssets =
             /^\/assets\//.test(linkTarget) &&
-            fs.existsSync(path.join(process.cwd(), linkTarget));
+            fs.existsSync(path.join(root, linkTarget));
 
           const exists =
             existsInRootAssets ||
@@ -290,7 +290,7 @@ export function validateLinks(docsDir: string, excludePatterns: string[] = []): 
               file: relativeFile,
               line: lineNum,
               link: linkTarget,
-              error: `Broken link: target resolved to ${path.relative(process.cwd(), resolvedPath)} does not exist`
+              error: `Broken link: target resolved to ${path.relative(root, resolvedPath)} does not exist`
             });
           }
         }
@@ -534,7 +534,7 @@ export function createMcpHandler(opts: McpHandlerOptions): McpHandler {
 
     if (name === "validate_docs") {
       // Pass config.exclude so validate_docs agrees with the build
-      const errors = validateLinks(docsDir, config.exclude || []);
+      const errors = validateLinks(docsDir, config.exclude || [], cwd);
       if (errors.length === 0) return text("Documentation links validated successfully! No broken links found.");
       const errorReport = errors.map(e => `[${e.file}:${e.line}] -> ${e.link} (${e.error})`).join('\n');
       return text(`Validation errors found:\n${errorReport}`);
@@ -604,6 +604,9 @@ export function createMcpHandler(opts: McpHandlerOptions): McpHandler {
     if (!message || typeof message !== 'object' || message.jsonrpc !== "2.0") {
       return fail(message?.id || null, -32600, "Invalid Request");
     }
+
+    // JSON-RPC 2.0: a message without `id` is a notification and gets no reply.
+    if (!('id' in message)) return null;
 
     const { method, params, id } = message;
 

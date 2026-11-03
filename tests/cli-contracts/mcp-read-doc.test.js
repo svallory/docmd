@@ -64,7 +64,7 @@ export const test = runTestFile({
   emoji: '📖',
   run: async () => {
     const dir = setup('mcp-read-doc');
-    writeFile(dir, 'docmd.config.json', JSON.stringify({ title: 'T', exclude: ['secret.md', 'drafts/*.md'] }));
+    writeFile(dir, 'docmd.config.json', JSON.stringify({ title: 'T', out: 'build', url: 'https://example.test', exclude: ['secret.md', 'drafts/*.md'] }));
     writeFile(dir, '.env', 'SECRET=1\n');
     writeFile(dir, 'docs/intro.md', '# Intro content\n');
     writeFile(dir, 'docs/a.markdown', '# A\n');
@@ -76,6 +76,8 @@ export const test = runTestFile({
     try { fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'docs/link.md')); } catch { symlinked = false; }
     writeFile(dir, 'docs-private/x.md', '# Private\n');
     writeFile(dir, 'x.md', '# Root\n');
+    writeFile(dir, 'docs/links.md', '[img](/assets/x.png)\n');
+    writeFile(dir, 'assets/x.png', 'png');
 
     const opts = { cwd: dir, docsDir: path.join(dir, 'docs'), exclude: ['secret.md', 'drafts/*.md'] };
     const table = [
@@ -119,26 +121,31 @@ export const test = runTestFile({
     assert(JSON.stringify(listed) === JSON.stringify(expectedTools), 'handler: tools/list names match docmd mcp');
     assert(JSON.stringify(handler.toolNames()) === JSON.stringify(expectedTools), 'handler: toolNames() equals tools/list');
 
-    const resources = (await rpc(3, 'resources/list')).result.resources.map((r) => r.uri);
+    const resources = (await rpc(3, 'resources/list')).result.resources.map((r) => `${r.uri} ${r.mimeType}`);
     assert(
-      JSON.stringify(resources) === JSON.stringify(['docmd://context/llms.txt', 'docmd://context/skill']),
+      JSON.stringify(resources) === JSON.stringify(['docmd://context/llms.txt text/plain', 'docmd://context/skill text/markdown']),
       'handler: resources/list URIs'
     );
 
     const cfg = JSON.parse(await toolText(4, 'get_config', {}));
-    assert(cfg.title === 'T' && cfg.src === 'docs' && cfg.out === 'site', 'handler: get_config summary has title/src/out');
+    assert(cfg.title === 'T' && cfg.src === 'docs' && cfg.out === 'build' && cfg.url === 'https://example.test', 'handler: get_config summary has title/src/out/url from the config');
 
     const listing = await toolText(5, 'list_docs', {});
-    assert(/^Documentation files \(\d+\):\n/.test(listing) && listing.includes('docs/intro.md'), 'handler: list_docs shape');
+    assert(
+      listing === 'Documentation files (3):\ndocs/a.markdown\ndocs/intro.md\ndocs/links.md',
+      `handler: list_docs lists exactly the visible markdown (got ${JSON.stringify(listing)})`
+    );
+    assert(
+      (await toolText(10, 'validate_docs', {})).startsWith('Documentation links validated successfully'),
+      'handler: validate_docs resolves /assets links against the handler cwd'
+    );
 
     assert((await handler.handle({ jsonrpc: '2.0', method: 'notifications/initialized' })) === null, 'handler: notification returns null');
+    assert((await handler.handle({ jsonrpc: '2.0', method: 'notifications/cancelled', params: {} })) === null, 'handler: any id-less notification returns null');
     assert((await rpc(6, 'no/such')).error.code === -32601, 'handler: unknown method returns -32601');
 
-    assert(
-      /outside the documentation source directory/.test(await toolText(7, 'read_doc', { route: '.env' })) &&
-        !(await toolText(8, 'read_doc', { route: '.env' })).includes('SECRET'),
-      'handler: read_doc ".env" refused'
-    );
+    const envText = await toolText(7, 'read_doc', { route: '.env' });
+    assert(/outside the documentation source directory/.test(envText) && !envText.includes('SECRET'), 'handler: read_doc ".env" refused');
     assert((await toolText(9, 'read_doc', { route: 'docs/intro.md' })).includes('# Intro content'), 'handler: read_doc "docs/intro.md" returned');
 
     const call = (id, route) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'read_doc', arguments: { route } } });
