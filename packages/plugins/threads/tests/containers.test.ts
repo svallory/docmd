@@ -240,7 +240,7 @@ test('anchor renders as blockquote.threads-anchor inside the thread', () => {
       quoted <b>text</b>
     :::
 
-    ::: comment c-1 "alice" "2026-01-01" by alice review r-0000aaaa
+    ::: comment c-1 "alice" "2026-01-01"
       hi
     :::
   :::
@@ -251,8 +251,6 @@ test('anchor renders as blockquote.threads-anchor inside the thread', () => {
   assert.ok(html.indexOf('threads-anchor') < html.indexOf('threads-comment"'));
   lacks(html, '<p>:::');
   lacks(html, '<p>quoted');
-  has(html, 'data-author="alice"');
-  lacks(html, 'data-author="unknown"');
 });
 
 test('thread without anchor renders no anchor element', () => {

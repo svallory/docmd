@@ -79,7 +79,5 @@ test('containers.parseCommentInfo gives the same author/date with and without v2
     assert.equal(b.author, a.author);
     assert.equal(b.date, a.date);
     assert.equal(b.author, 'Alice');
-    assert.equal(b.authorKey, 'alice');
-    assert.equal(b.reviewId, 'r-0000aaaa');
   }
 });

@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseCommentInfo,
   parseThreadsFromContent,
   serializeThreadsBlock,
   replaceThreadsBlock,
@@ -26,6 +25,7 @@ Some content here.
       :::
     :::
   :::
+
   ::: thread t-def456 resolved "charlie" "2026-03-08"
     ::: comment "charlie" "2026-03-08"
       Typo in this section
@@ -244,33 +244,30 @@ test('comment ids are unique', () => {
   assert.equal(ids.size, 3);
 });
 
-const v2Line = 'comment c-1 "Alice" "2026-01-02" reply-to c-0 edited "2026-01-03" by alice@x.y review r-0000aaaa';
-
-test('v2 comment line parses authorKey and reviewId', () => {
-  const info = parseCommentInfo(v2Line);
-  assert.equal(info?.id, 'c-1');
-  assert.equal(info?.parent_id, 'c-0');
-  assert.equal(info?.edited_at, '2026-01-03');
-  assert.equal(info?.authorKey, 'alice@x.y');
-  assert.equal(info?.reviewId, 'r-0000aaaa');
-});
-
-const tokenCases: Array<[string, string, string]> = [
-  ['none', '', ''],
-  ['reply-to', ' reply-to c-0', ''],
-  ['edited', ' edited "2026-01-03"', ''],
-  ['by', ' by alice@x.y', ''],
-  ['review', ' review r-0000aaaa', ''],
-  ['all', ' reply-to c-0 edited "2026-01-03" by alice@x.y review r-0000aaaa', ''],
+type Expected = { authorKey?: string; reviewId?: string; parent_id?: string; edited_at?: string };
+const tokenCases: Array<[string, string, Expected]> = [
+  ['none', '', {}],
+  ['reply-to', ' reply-to c-0', { parent_id: 'c-0' }],
+  ['edited', ' edited "2026-01-03"', { edited_at: '2026-01-03' }],
+  ['by', ' by alice@x.y', { authorKey: 'alice@x.y' }],
+  ['review', ' review r-0000aaaa', { reviewId: 'r-0000aaaa' }],
+  [
+    'all',
+    ' reply-to c-0 edited "2026-01-03" by alice@x.y review r-0000aaaa',
+    { parent_id: 'c-0', edited_at: '2026-01-03', authorKey: 'alice@x.y', reviewId: 'r-0000aaaa' },
+  ],
 ];
-for (const [name, tokens] of tokenCases.map(([n, t]) => [n, t] as const)) {
-  test(`comment tokens serialise in fixed order: ${name}`, () => {
+for (const [name, tokens, expected] of tokenCases) {
+  test(`comment tokens parse and serialise in fixed order: ${name}`, () => {
     const line = `comment c-1 "Alice" "2026-01-02"${tokens}`;
-    const info = parseCommentInfo(line)!;
     const content = `::: threads\n  ::: thread t-1\n    ::: ${line}\n      hi\n    :::\n  :::\n:::\n`;
     const [t] = parseThreadsFromContent(content);
-    assert.equal(t.comments[0].authorKey, info.authorKey ?? undefined);
-    assert.equal(t.comments[0].reviewId, info.reviewId ?? undefined);
+    const c = t.comments[0];
+    assert.equal(c.id, 'c-1');
+    assert.equal(c.parent_id, expected.parent_id ?? null);
+    assert.equal(c.edited_at, expected.edited_at ?? null);
+    assert.equal(c.authorKey, expected.authorKey);
+    assert.equal(c.reviewId, expected.reviewId);
     assert.equal(serializeThreadsBlock([t]), content);
   });
 }
@@ -298,4 +295,21 @@ test('anchor child parses to thread.anchor and serialises first, only when set',
   assert.equal(t1.comments.length, 1);
   assert.equal(t2.anchor, undefined);
   assert.equal(serializeThreadsBlock([t1, t2]), content);
+});
+
+test('an anchor that is not the first child is kept and serialised first', () => {
+  const content = `::: threads
+  ::: thread t-1
+    ::: comment c-1 "Alice" "2026-01-02"
+      hi
+    :::
+    ::: anchor
+      late quote
+    :::
+  :::
+:::
+`;
+  const [t] = parseThreadsFromContent(content);
+  assert.deepEqual(t.anchor, { quote: 'late quote' });
+  assert.ok(serializeThreadsBlock([t]).indexOf('::: anchor') < serializeThreadsBlock([t]).indexOf('::: comment'));
 });
