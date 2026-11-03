@@ -87,6 +87,7 @@ services:
       - ./site:/site
     # Default command of the image; shown here for clarity.
     command: ["serve", "--host", "0.0.0.0"]
+    # If you change PORT, change the `ports:` mapping to match.
     environment:
       PORT: "3000"
 ```
@@ -141,16 +142,37 @@ spec:
       labels:
         app: docmd
     spec:
+      # `serve` clears and rewrites its output directory, so /docs must be
+      # writable. A configMap mount is read-only: stage it and copy it into an
+      # emptyDir. (configMap keys are flat; for a nested docs/ tree use a
+      # git-sync init step or bake the docs into your own image instead.)
+      initContainers:
+      - name: stage-docs
+        image: ghcr.io/docmd-io/docmd:latest
+        command: ["sh", "-c", "cp -r /content/. /docs/ && chown -R 1001:1001 /docs"]
+        volumeMounts:
+        - name: content
+          mountPath: /content
+        - name: docs
+          mountPath: /docs
       containers:
       - name: docmd
         image: ghcr.io/docmd-io/docmd:latest
+        # No `command:`: the image's entrypoint and default command
+        # (`serve --host 0.0.0.0`) run as intended.
         ports:
         - containerPort: 3000
         volumeMounts:
         - name: docs
           mountPath: /docs
-        # `serve` must bind 0.0.0.0 to be reachable through the pod network.
-        command: ["docmd", "serve", "--host", "0.0.0.0"]
+        # /healthz returns 503 during the initial build; the startupProbe holds
+        # off liveness until the first build finishes (up to 150 x 2s = 5 min).
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          periodSeconds: 2
+          failureThreshold: 150
         readinessProbe:
           httpGet:
             path: /healthz
@@ -160,9 +182,11 @@ spec:
             path: /healthz
             port: 3000
       volumes:
-      - name: docs
+      - name: content
         configMap:
           name: docs-content
+      - name: docs
+        emptyDir: {}
 ```
 
 ## Environment Variables
@@ -171,12 +195,12 @@ spec:
 |----------|-------------|---------|
 | `NODE_ENV` | Node environment | `production` |
 | `DOCMD_CONTAINER` | Container mode flag | `true` |
-| `DOCMD_HOST` | Bind address for `serve` and `dev` (overridden by `--host`) | `0.0.0.0` via the image's default command; `127.0.0.1` otherwise |
+| `DOCMD_HOST` | Bind address for `serve` and `dev` (overridden by `--host`) | `0.0.0.0` via the image's default command; `127.0.0.1` otherwise. Ignored with the image's default command (it passes `--host`); takes effect only when you override the command without `--host`. |
 | `PORT` | Port for `serve` (overridden by `--port`); also used by the health check | `3000` |
 
 ### Behind a reverse proxy
 
-When `docmd serve` runs behind a reverse proxy, `serve.actions.origins` in your docmd config must list the public origin(s) users reach the site from (for example `https://docs.example.com`); requests to actions from any other origin are rejected.
+If you enable `serve.actions` behind a reverse proxy, `serve.actions.origins` must list the public origin(s) users reach the site from (for example `https://docs.example.com`); WebSocket connections from any other origin are rejected. Actions are off by default.
 
 ## Building Locally
 
@@ -237,7 +261,7 @@ The server must bind `0.0.0.0` inside the container for a published port to work
 docker run -p 3000:3000 ghcr.io/docmd-io/docmd:latest serve --host 0.0.0.0
 ```
 
-> **Security**: when you bind to 0.0.0.0, every host that can reach the container's port can connect. Publish the port only on trusted networks, or put a reverse proxy in front. The dev server's WebSocket requires an Origin that matches the bind host (defence against CSWSH, CWE-1385).
+> **Security**: when you bind to 0.0.0.0, every host that can reach the container's port can connect. Publish the port only on trusted networks, or put a reverse proxy in front. With `dev`, the WebSocket requires an Origin matching the bind host (defence against CSWSH, CWE-1385); with `serve`, actions are off unless enabled and are then restricted to `serve.actions.origins`.
 
 ### Memory Issues
 

@@ -228,7 +228,7 @@ jobs:
 
           ok=0
           for i in $(seq 1 30); do
-            if body=$(curl -fs http://localhost:3000/healthz); then
+            if body=$(curl -fs --max-time 2 http://localhost:3000/healthz); then
               echo "✅ /healthz: $body"
               ok=1
               break
@@ -243,7 +243,7 @@ jobs:
             exit 1
           fi
 
-          echo "$body" | grep -q '"status":"ok"'
+          echo "$body" | grep -q '"status":"ok"' || { docker logs docmd-serve-test; docker stop docmd-serve-test; exit 1; }
           docker stop docmd-serve-test
           code=$(docker inspect --format='{{.State.ExitCode}}' docmd-serve-test)
           docker rm docmd-serve-test
