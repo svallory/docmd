@@ -999,7 +999,10 @@ function registerPlugin(
           await fn(handle);
         } catch (err: any) {
           pluginErrors.push({ plugin: name, hook: 'onServerReady', message: err.message });
-          throw err;
+          // Name the plugin so serve's startup failure says which one threw.
+          const wrapped: any = new Error(`onServerReady failed in plugin "${name}": ${err?.message ?? String(err)}`);
+          wrapped.cause = err;
+          throw wrapped;
         }
       });
     } else {

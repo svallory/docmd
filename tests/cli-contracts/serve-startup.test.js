@@ -11,10 +11,8 @@
  */
 
 import { setup, writeFile, runTestFile } from '../shared.js';
-import { freePort, canConnect, spawnServe, waitForHealthz, exitWithin } from '../_lib/serve-harness.js';
+import { freePort, canConnect, spawnServe, waitForHealthz, exitWithin, copyServePlugin } from '../_lib/serve-harness.js';
 import net from 'node:net';
-import fs from 'node:fs';
-import path from 'node:path';
 
 let passed = 0;
 let failed = 0;
@@ -97,8 +95,7 @@ export const test = runTestFile({
     {
       const dir = project('serve-startup-onready', {});
       const port = await freePort();
-      const fixtureDir = path.join(import.meta.dirname, 'fixtures/serve-plugin');
-      for (const f of fs.readdirSync(fixtureDir)) writeFile(dir, `plugins/serve-plugin/${f}`, fs.readFileSync(path.join(fixtureDir, f), 'utf8'));
+      copyServePlugin(dir);
       writeFile(dir, 'docmd.config.json', JSON.stringify({
         title: 'T', src: './docs', out: './site',
         plugins: { './plugins/serve-plugin': {} },
@@ -108,7 +105,7 @@ export const test = runTestFile({
       try {
         const r = await exitWithin(handle, 15000);
         assert(r.code === 1 && !r.timedOut, 'D9: a throwing onServerReady exits 1');
-        assert(handle.output.text.includes('serve-plugin'), 'D9: the error names the plugin');
+        assert(/onServerReady failed in plugin "[^"]*serve-plugin"/.test(handle.output.text), 'D9: the error names the plugin');
         assert(!(await canConnect('127.0.0.1', port)), 'D9: nothing listens on the port');
       } finally {
         if (handle.child.exitCode === null) { handle.child.kill('SIGKILL'); await handle.exited; }

@@ -12,7 +12,7 @@
  */
 
 import { setup, writeFile, runTestFile, DOCMD } from '../shared.js';
-import { freePort, canConnect, request, spawnServe, waitForHealthz, exitWithin } from '../_lib/serve-harness.js';
+import { freePort, canConnect, request, spawnServe, waitForHealthz, exitWithin, copyServePlugin } from '../_lib/serve-harness.js';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,10 +60,20 @@ function connect(port, headers = {}) {
     frames.push(frame);
     for (const w of [...waiters]) if (w.pred(frame)) { waiters.splice(waiters.indexOf(w), 1); w.resolve(frame); }
   });
-  const waitFor = (pred) => {
+  const waitFor = (pred, timeoutMs = 10000) => {
     const hit = frames.find(pred);
     if (hit) return Promise.resolve(hit);
-    return new Promise((resolve) => waiters.push({ pred, resolve }));
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        pred,
+        resolve: (frame) => { clearTimeout(timer); resolve(frame); },
+      };
+      const timer = setTimeout(() => {
+        waiters.splice(waiters.indexOf(waiter), 1);
+        reject(new Error('waitFor timed out'));
+      }, timeoutMs);
+      waiters.push(waiter);
+    });
   };
   const call = async (action, payload) => {
     const id = nextId++;
@@ -98,10 +108,7 @@ export const test = runTestFile({
     const origin = `http://127.0.0.1:${port}`;
     writeFile(dir, 'docs/index.md', '# Home\n');
     writeFile(dir, 'docs/other.md', '# Other\n\nfirst version\n');
-    const fixtureDir = path.join(import.meta.dirname, 'fixtures/serve-plugin');
-    for (const f of fs.readdirSync(fixtureDir)) {
-      writeFile(dir, `plugins/serve-plugin/${f}`, fs.readFileSync(path.join(fixtureDir, f), 'utf8'));
-    }
+    copyServePlugin(dir);
     writeFile(dir, 'docmd.config.json', JSON.stringify({
       title: 'Actions',
       src: './docs',
@@ -144,13 +151,13 @@ export const test = runTestFile({
       assert(dump.headers['x-test-identity'] === 'alice' && !('cookie' in dump.headers) && !('set-cookie' in dump.headers), 'AC-19: no cookie/set-cookie in ctx.caller.headers');
 
       // AC-20: worker tasks.
-      const worker = await client.call('test:worker', { n: 7 });
+      const worker = await client.call('test:worker', { n: 7 }).catch((e) => `error: ${e.message}`);
       assert(worker === 49, `AC-20: test:worker returns the worker task result (got ${JSON.stringify(worker)})`);
 
       // AC-24: ctx.writeFile -> auto-rebuild -> system:rebuilt, page updated, no reload frame.
       await client.call('test:write', { file: 'docs/other.md', content: '# Other\n\nsecond version\n' });
-      const rebuilt = await client.waitFor(isRebuilt);
-      assert(rebuilt.json.data.files.includes('docs/other.md'), 'AC-24: system:rebuilt lists docs/other.md (project-relative)');
+      const rebuilt = await client.waitFor(isRebuilt).catch(() => null);
+      assert(rebuilt !== null && rebuilt.json.data.files.includes('docs/other.md'), 'AC-24: system:rebuilt lists docs/other.md (project-relative)');
       const page2 = await pollPage(port, '/other/', (r) => r.status === 200 && r.body.includes('second version'));
       assert(page2 !== null, 'AC-24: the written page reflects the new content within 10 s');
 
@@ -172,9 +179,10 @@ export const test = runTestFile({
       assert(!client.frames.some((f) => f.text === 'reload'), 'AC-24: no reload frame was received');
 
       // AC-7 (WS half): SIGTERM closes the socket, exits 0, refuses connections.
+      const closedInTime = Promise.race([client.closed.then(() => true), new Promise((res) => setTimeout(() => res(false), 5000))]);
       handle.child.kill('SIGTERM');
       const r = await exitWithin(handle, 5000);
-      assert(client.ws.readyState === WebSocket.CLOSED, 'AC-7: the open WebSocket observed close');
+      assert(await closedInTime, 'AC-7: the open WebSocket observed close');
       assert(r.code === 0 && !r.timedOut, 'AC-7: SIGTERM exits 0 within 5 s');
       assert(!(await canConnect('127.0.0.1', port)), 'AC-7: a new connect is refused');
     } finally {
