@@ -21,6 +21,7 @@ import { TUI, loadPlugins, getPluginLoadErrors, preflightEnsureRuntimeDeps, type
 import { flushNormaliserWarnings, setNormaliserVerbose } from '@docmd/parser';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { resolveUiAsset } from '../server/ui-assets.js';
 import { copyResolvedAssets, prepareAssets, resolveBuildAssets } from '../engine/assets.js';
 import { buildLocales, generateLocaleRedirect, preCountPages } from '../engine/i18n.js';
 import { NOT_FOUND_DEFAULTS } from '../utils/config-schema.js';
@@ -139,7 +140,20 @@ export async function buildSite(configPath: string, opts: any = {}) {
     }
     await preflightEnsureRuntimeDeps(preflightReqs, process.cwd());
 
-    const hooks = await loadPlugins(config, { resolvePaths: [__dirname], isDev: options.isDev });
+    const hooks = await loadPlugins(config, { resolvePaths: [__dirname], isDev: options.isDev, liveServer: opts.liveServer === true });
+
+    // Live-server builds (programmatic only, never a CLI flag) ship the client
+    // bridge that opens the action WebSocket, through the normal asset pipeline.
+    if (opts.liveServer === true) {
+      const bridge = async () => [{
+        src: resolveUiAsset('js/docmd-api.js'),
+        dest: 'assets/js/docmd-api.js',
+        type: 'js',
+        location: 'body'
+      }];
+      (bridge as any)._pluginName = 'docmd-api';
+      hooks.assets.push(bridge as any);
+    }
 
     // Phase 3 PR 3.A (F6): a plugin the user listed in `config.plugins` but
     // which failed to load is a build failure, not a warning. Without this

@@ -314,6 +314,41 @@ export const test = runTestFile({
 
       fs.rmSync(testDir, { recursive: true, force: true });
     }
+
+    // PAA-5: `liveServer: true` keeps the client assets of requiresLiveServer
+    // plugins and ships the docmd-api.js bridge; plain `docmd build` does not.
+    {
+      const proj = setup('paa-live-server');
+      writeFile(proj, 'docs/index.md', '# Live\n');
+      writeFile(proj, 'docmd.config.json', JSON.stringify({
+        title: 'PAA-5',
+        src: './docs',
+        out: './site',
+        plugins: { threads: {} }
+      }, null, 2) + '\n');
+      const assetFiles = ['assets/js/threads.js', 'assets/css/threads.css', 'assets/js/docmd-api.js'];
+
+      const { buildSite } = await import('../../packages/core/dist/commands/build.js');
+      await buildSite(path.join(proj, 'docmd.config.json'), { isDev: false, quiet: true, liveServer: true });
+      const html = fs.readFileSync(path.join(proj, 'site/index.html'), 'utf8');
+      for (const f of assetFiles) {
+        assert(fs.existsSync(path.join(proj, 'site', f)), `PAA-5: liveServer build emits site/${f}`);
+        assert(html.includes(f), `PAA-5: liveServer index.html references ${f}`);
+      }
+      const bodyHtml = html.slice(html.indexOf('<body'));
+      assert(bodyHtml.includes('assets/js/docmd-api.js'), 'PAA-5: docmd-api.js is referenced inside <body>');
+
+      fs.rmSync(path.join(proj, 'site'), { recursive: true, force: true });
+      const plain = build(proj);
+      assert(plain.ok, 'PAA-5: plain build succeeds');
+      const plainHtml = fs.readFileSync(path.join(proj, 'site/index.html'), 'utf8');
+      for (const f of assetFiles) {
+        // docmd-api.js is always copied with the UI asset dir; only its page reference is live-server only.
+        if (!f.endsWith('docmd-api.js')) assert(!fs.existsSync(path.join(proj, 'site', f)), `PAA-5: plain build omits site/${f}`);
+        assert(!plainHtml.includes(f), `PAA-5: plain index.html does not reference ${f}`);
+      }
+      assert(/requires live dev server/.test(plain.output), 'PAA-5: plain build prints the dev-only warning');
+    }
   }
 });
 
