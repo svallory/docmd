@@ -56,10 +56,14 @@ test('reloads once and sets the flag after a connected page loses the server', (
   b.open();
   for (let i = 0; i < 5; i++) {
     b.instances[b.instances.length - 1].onclose();
-    if (i < 4) b.timers.pop().fn();
+    if (i < 4) {
+      assert.equal(b.state.reloads, 0, `no reload before close ${i + 1}`);
+      b.timers.pop().fn();
+    }
   }
   assert.equal(b.state.reloads, 1);
-  assert.equal(b.store.get(FLAG), '1');
+  assert.ok(b.store.has(FLAG));
+  assert.equal(b.timers.length, 0, 'gives up after maxRetries');
 });
 
 test('never reloads when the socket never connected, and keeps the retry schedule', () => {
