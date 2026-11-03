@@ -33,17 +33,21 @@ export async function cleanThreads(_page: Page): Promise<void> {
 
 /**
  * Publish the open review of `author` (comments are drafts until published).
- * Resolves with the publish result, or null when the author has nothing to publish.
+ * An empty review throws, unless `allowEmpty` (then it resolves null).
  */
-export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string } | null> {
-  return page.evaluate(async (a) => {
+export async function publishReview(
+  page: Page,
+  author = "TestUser",
+  { allowEmpty = false }: { allowEmpty?: boolean } = {},
+): Promise<{ reviewId: string } | null> {
+  return page.evaluate(async ([a, allow]) => {
     try {
       return await docmd.call("threads:publish-review", { author: a });
     } catch (err) {
-      if (String(err instanceof Error ? err.message : err).includes("threads/empty-review")) return null;
+      if (allow && String(err instanceof Error ? err.message : err).includes("threads/empty-review")) return null;
       throw err;
     }
-  }, author);
+  }, [author, allowEmpty] as const);
 }
 
 /**

@@ -72,6 +72,8 @@ export interface ApplyOptions {
   authorKey: string;
   authorName: string;
   reviewId: string;
+  /** Desired end state per opId for resolve-thread (resolved) and toggle-reaction (present); see deriveTargets. */
+  targets?: Record<string, boolean>;
 }
 
 export interface ApplyResult {
@@ -83,12 +85,19 @@ export interface ApplyResult {
 /** A quote line that parses as a container fence would corrupt the threads block on re-parse. */
 const unsafeQuote = (quote: string) => quote.split('\n').some((l) => l.trim() === ':::' || l.trim().startsWith('::: '));
 
-/** Wrap the first occurrence of `quote` in the body (above the threads block) as `==quote=={id}`. */
+/**
+ * Wrap the first occurrence of `quote` in the body (after the frontmatter, above the
+ * threads block) as `==quote=={id}`, skipping occurrences that touch an existing mark.
+ * No free occurrence: the content is returned unchanged (the anchor is still recorded).
+ */
 function wrapQuote(content: string, quote: string, threadId: string): string {
   const cut = content.indexOf('\n::: threads');
   const body = cut >= 0 ? content.slice(0, cut) : content;
   const rest = cut >= 0 ? content.slice(cut) : '';
-  const at = body.indexOf(quote);
+  const from = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(body)?.[0].length ?? 0;
+  const spans = [...body.matchAll(/==((?:(?!==).)+)==\{[^}]+\}/g)].map((m) => [m.index!, m.index! + m[0].length]);
+  let at = body.indexOf(quote, from);
+  while (at >= 0 && spans.some(([a, b]) => at < b && at + quote.length > a)) at = body.indexOf(quote, at + 1);
   if (at < 0) return content;
   return body.slice(0, at) + `==${quote}=={${threadId}}` + body.slice(at + quote.length) + rest;
 }
@@ -97,11 +106,39 @@ const unwrapThread = (content: string, threadId: string) =>
   content.replace(new RegExp(`==((?:(?!==).)+)==\\{${escapeRe(threadId)}\\}`, 'g'), '$1');
 
 /**
+ * Turn the toggle ops of one file into desired end states, from the file as first read:
+ * resolve-thread -> resolved, toggle-reaction -> the author is present. Ops are walked in
+ * order, so a second toggle of the same target flips the first one's result. Passing the
+ * result to applyOps makes a re-run a no-op.
+ */
+export function deriveTargets(content: string, ops: DraftOp[], authorName: string): Record<string, boolean> {
+  const threads = parser.parseThreadsFromContent(content);
+  const resolved = new Map(threads.map((t) => [t.id, t.resolved]));
+  const present = new Map<string, boolean>();
+  for (const t of threads)
+    for (const c of t.comments)
+      for (const r of c.reactions ?? []) present.set(`${t.id}\0${c.id}\0${r.emoji}`, r.authors.includes(authorName));
+  const targets: Record<string, boolean> = {};
+  for (const op of ops) {
+    if (op.kind === 'resolve-thread') {
+      targets[op.opId] = !(resolved.get(op.threadId) ?? false);
+      resolved.set(op.threadId, targets[op.opId]);
+    } else if (op.kind === 'toggle-reaction') {
+      const key = `${op.threadId}\0${op.commentId}\0${op.emoji}`;
+      targets[op.opId] = !(present.get(key) ?? false);
+      present.set(key, targets[op.opId]);
+    }
+  }
+  return targets;
+}
+
+/**
  * Apply one file's ops (in order) to its markdown. Ops whose target is gone are
  * skipped with a reason. `applied` carries `before` (what discard needs to
- * reverse the op), `quote` (add-thread) and `pageTitle`. Adding an id that
- * already exists is skipped, so replaying add/edit/delete ops is idempotent;
- * resolve and reaction ops are toggles and are not.
+ * reverse the op), `quote` (add-thread) and `pageTitle`. Replaying is safe (C-16):
+ * an add whose id already carries this review's id counts as applied, any other
+ * existing id is skipped, and resolve/reaction ops set the state in `opts.targets`
+ * instead of flipping it (without a target they flip).
  */
 export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): ApplyResult {
   const threads: Thread[] = parser.parseThreadsFromContent(content);
@@ -109,6 +146,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
   const applied: ManifestOp[] = [];
   const skipped: ApplyResult['skipped'] = [];
   let text = content;
+  let changed = false;
 
   const skip = (op: DraftOp, reason: string) => void skipped.push({ opId: op.opId, reason });
   const done = (op: DraftOp, extra: Partial<ManifestOp> = {}) => {
@@ -122,8 +160,12 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
     const comment = (id: string) => thread?.comments.find((c) => c.id === id);
     switch (op.kind) {
       case 'add-thread': {
-        if (thread) { skip(op, `thread ${op.threadId} already exists`); break; }
         const quote = op.anchor?.quote;
+        if (thread) {
+          if (comment(op.commentId)?.reviewId === opts.reviewId) done(op, quote ? { quote } : {});
+          else skip(op, `thread ${op.threadId} already exists`);
+          break;
+        }
         if (quote && unsafeQuote(quote)) { skip(op, 'anchor quote contains a container fence'); break; }
         const first: Comment = {
           id: op.commentId, thread_id: op.threadId, parent_id: null, author: opts.authorName,
@@ -136,17 +178,24 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
           text = wrapQuote(text, quote, op.threadId);
         }
         threads.push(t);
+        changed = true;
         done(op, quote ? { quote } : {});
         break;
       }
       case 'add-comment': {
         if (!thread) { skip(op, `thread ${op.threadId} not found`); break; }
-        if (comment(op.commentId)) { skip(op, `comment ${op.commentId} already exists`); break; }
+        const existing = comment(op.commentId);
+        if (existing) {
+          if (existing.reviewId === opts.reviewId) done(op);
+          else skip(op, `comment ${op.commentId} already exists`);
+          break;
+        }
         thread.comments.push({
           id: op.commentId, thread_id: op.threadId, parent_id: op.parentId, author: opts.authorName,
           date: day(op.at), edited_at: null, authorKey: opts.authorKey, reviewId: opts.reviewId,
           body: op.body, reactions: [],
         });
+        changed = true;
         done(op);
         break;
       }
@@ -156,6 +205,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
         const before = { body: c.body, edited_at: c.edited_at };
         c.body = op.body;
         c.edited_at = day(op.at);
+        changed = true;
         done(op, { before });
         break;
       }
@@ -163,6 +213,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
         const idx = thread ? thread.comments.findIndex((c) => c.id === op.commentId) : -1;
         if (!thread || idx < 0) { skip(op, thread ? `comment ${op.commentId} not found` : `thread ${op.threadId} not found`); break; }
         const [removed] = thread.comments.splice(idx, 1);
+        changed = true;
         done(op, { before: { comment: removed, index: idx } });
         break;
       }
@@ -171,16 +222,20 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
         if (idx < 0) { skip(op, `thread ${op.threadId} not found`); break; }
         const [removed] = threads.splice(idx, 1);
         text = unwrapThread(text, op.threadId);
+        changed = true;
         done(op, { before: { thread: removed, index: idx } });
         break;
       }
       case 'resolve-thread': {
         if (!thread) { skip(op, `thread ${op.threadId} not found`); break; }
         const before = { resolved: thread.resolved, resolved_by: thread.resolved_by, resolved_at: thread.resolved_at };
-        if (thread.resolved) {
-          thread.resolved = false; thread.resolved_by = null; thread.resolved_at = null;
-        } else {
+        const want = opts.targets?.[op.opId] ?? !thread.resolved;
+        if (want && !thread.resolved) {
           thread.resolved = true; thread.resolved_by = opts.authorName; thread.resolved_at = day(op.at);
+          changed = true;
+        } else if (!want && thread.resolved) {
+          thread.resolved = false; thread.resolved_by = null; thread.resolved_at = null;
+          changed = true;
         }
         done(op, { before });
         break;
@@ -191,18 +246,23 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
         c.reactions ??= [];
         const r = c.reactions.find((x) => x.emoji === op.emoji);
         const present = !!r && r.authors.includes(opts.authorName);
-        if (!r) c.reactions.push({ emoji: op.emoji, authors: [opts.authorName] });
-        else if (present) {
-          r.authors = r.authors.filter((a) => a !== opts.authorName);
-          if (!r.authors.length) c.reactions = c.reactions.filter((x) => x !== r);
-        } else r.authors.push(opts.authorName);
+        const want = opts.targets?.[op.opId] ?? !present;
+        if (want && !present) {
+          if (r) r.authors.push(opts.authorName);
+          else c.reactions.push({ emoji: op.emoji, authors: [opts.authorName] });
+          changed = true;
+        } else if (!want && present) {
+          r!.authors = r!.authors.filter((a) => a !== opts.authorName);
+          if (!r!.authors.length) c.reactions = c.reactions.filter((x) => x !== r);
+          changed = true;
+        }
         done(op, { before: { present } });
         break;
       }
     }
   }
 
-  if (!applied.length) return { content, applied, skipped };
+  if (!changed) return { content, applied, skipped };
   return { content: parser.replaceThreadsBlock(text, threads), applied, skipped };
 }
 
@@ -211,7 +271,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
 // ---------------------------------------------------------------------------
 
 /** `<docsRoot>`: the project root joined with the configured docs source folder. */
-export const docsRootOf = (ctx: ActionContext): string => path.join(ctx.projectRoot, ctx.config?.src || '');
+const docsRootOf = (ctx: ActionContext): string => path.join(ctx.projectRoot, ctx.config?.src || '');
 const reviewsDir = (ctx: ActionContext) => path.join(docsRootOf(ctx), '.threads', 'reviews');
 
 export async function writeManifest(ctx: ActionContext, manifest: ReviewManifest): Promise<void> {
@@ -310,6 +370,7 @@ export async function publish(
         const applied: ManifestOp[] = [];
         skipped = [];
         const titles: Record<string, string | null> = {};
+        const results: Array<{ file: string; original: string; next: string }> = [];
         for (const file of files) {
           const fileOps = ops.filter((o) => o.file === file);
           let content: string;
@@ -320,27 +381,40 @@ export async function publish(
             continue;
           }
           titles[file] = pageTitleOf(content);
-          const result = applyOps(content, fileOps, { authorKey: caller.key, authorName: caller.name, reviewId });
+          const targets = deriveTargets(content, fileOps, caller.name);
+          const result = applyOps(content, fileOps, { authorKey: caller.key, authorName: caller.name, reviewId, targets });
           applied.push(...result.applied);
           skipped.push(...result.skipped);
-          if (result.content !== content) await ctx.writeFile(file, result.content);
+          results.push({ file, original: content, next: result.content });
         }
         applied.sort((a, b) => order.get(a.opId)! - order.get(b.opId)!);
 
-        const title = input.title ?? journal.review.title;
-        const summary = input.summary ?? journal.review.summary;
-        await writeManifest(ctx, {
-          version: 1,
-          id: reviewId,
-          authorKey: caller.key,
-          authorName: caller.name,
-          title: cleanTitle(title || defaultTitle(caller.name, ops, titles)),
-          summary: summary ? cleanSummary(summary) : null,
-          state: 'published',
-          publishedAt: new Date(now()).toISOString(),
-          ops: applied,
-          skipped,
-        });
+        // Write everything or nothing: a failure restores the files already written.
+        const written: typeof results = [];
+        try {
+          for (const r of results) {
+            if (r.next === r.original) continue;
+            written.push(r);
+            await ctx.writeFile(r.file, r.next);
+          }
+          const title = 'title' in input ? input.title : journal.review.title;
+          const summary = 'summary' in input ? input.summary : journal.review.summary;
+          await writeManifest(ctx, {
+            version: 1,
+            id: reviewId,
+            authorKey: caller.key,
+            authorName: caller.name,
+            title: cleanTitle(title || defaultTitle(caller.name, ops, titles)),
+            summary: summary ? cleanSummary(summary) : null,
+            state: 'published',
+            publishedAt: new Date(now()).toISOString(),
+            ops: applied,
+            skipped,
+          });
+        } catch (e) {
+          for (const r of written.reverse()) await ctx.writeFile(r.file, r.original).catch(() => undefined);
+          throw e;
+        }
       },
       { reviewId, authorKey: caller.key, authorName: caller.name, files },
     );
@@ -353,4 +427,16 @@ export async function publish(
     });
     return { reviewId, skipped };
   });
+}
+
+/** Optional `title` / `summary` (string or null) of a review payload, capped; absent keys stay absent. */
+export function parseReviewFields(action: string, payload: any): { title?: string | null; summary?: string | null } {
+  const out: { title?: string | null; summary?: string | null } = {};
+  for (const [field, clean] of [['title', cleanTitle], ['summary', cleanSummary]] as const) {
+    const v = payload?.[field];
+    if (v === undefined) continue;
+    if (v !== null && typeof v !== 'string') throw new ThreadsError('invalid', `${action}: ${field} must be a string`);
+    out[field] = v === null ? null : clean(v);
+  }
+  return out;
 }
