@@ -1,14 +1,20 @@
-import { test, before, after, beforeEach } from 'node:test';
+import { test, mock, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { tempProject, makeCtx, today, type TempProject } from './helpers.ts';
+import { tempProject, makeCtx, type TempProject } from './helpers.ts';
 import { actions } from '../src/plugin/actions.ts';
 import * as plugin from '../src/index.ts';
 
 let project: TempProject;
-before(() => { project = tempProject(); });
-after(() => project.cleanup());
+before(() => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-03-10T12:00:00Z') });
+  project = tempProject();
+});
+after(() => {
+  mock.timers.reset();
+  project.cleanup();
+});
 beforeEach(() => {
   project.reset();
   stripThreads();
@@ -18,7 +24,9 @@ beforeEach(() => {
 function stripThreads() {
   const file = path.join(project.root, project.file);
   const content = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, content.slice(0, content.indexOf('::: threads')));
+  const idx = content.indexOf('::: threads');
+  assert.ok(idx >= 0, 'fixture has a threads block');
+  fs.writeFileSync(file, content.slice(0, idx));
 }
 
 /** Call an action like the dispatcher does and report whether it asked for a reload. */
@@ -39,6 +47,7 @@ async function addThread(extra: Record<string, unknown> = {}) {
   return result;
 }
 
+// Depends on e2e/fixtures/playground-index.md: update together if that fixture's threads change.
 test('get-threads reads the threads of the fixture page without reloading', async () => {
   project.reset();
   const { result, reload } = await call('threads:get-threads', { file: project.file });
@@ -67,7 +76,7 @@ test('add-thread creates a thread with ids and reloads', async () => {
   assert.equal(thread.comments.length, 1);
   assert.equal(thread.comments[0].author, 'alice');
   assert.equal(thread.comments[0].body, 'This needs to be reworded.');
-  assert.equal(thread.comments[0].date, today);
+  assert.equal(thread.comments[0].date, '2026-03-10');
   assert.ok(thread.comments[0].id.startsWith('c-'));
   assert.equal(thread.comments[0].id.length, 10);
 });
@@ -81,7 +90,7 @@ test('add-comment appends to the thread and get-threads returns both', async () 
   assert.ok(comment.id.startsWith('c-'));
   assert.equal(comment.author, 'bob');
   assert.equal(comment.body, 'I agree, let me fix it.');
-  assert.equal(comment.date, today);
+  assert.equal(comment.date, '2026-03-10');
   assert.equal(comment.thread_id, thread.id);
 
   const { result: threads } = await call('threads:get-threads', { file: project.file });
@@ -102,11 +111,11 @@ test('edit-comment updates body and edited_at', async () => {
   });
   assert.equal(reload, true);
   assert.equal(result.body, 'Updated: I will fix it tomorrow.');
-  assert.equal(result.edited_at, today);
+  assert.equal(result.edited_at, '2026-03-10');
 
   const { result: after } = await call('threads:get-threads', { file: project.file });
   assert.equal(after[0].comments[1].body, 'Updated: I will fix it tomorrow.');
-  assert.equal(after[0].comments[1].edited_at, today);
+  assert.equal(after[0].comments[1].edited_at, '2026-03-10');
 });
 
 test('toggle-reaction adds authors and removes the reaction when the last leaves', async () => {
@@ -143,7 +152,7 @@ test('resolve-thread toggles resolved state', async () => {
   assert.equal(resolved.reload, true);
   assert.equal(resolved.result.resolved, true);
   assert.equal(resolved.result.resolved_by, 'alice');
-  assert.equal(resolved.result.resolved_at, today);
+  assert.equal(resolved.result.resolved_at, '2026-03-10');
 
   const unresolved = await resolve();
   assert.equal(unresolved.result.resolved, false);
@@ -181,7 +190,9 @@ test('delete-thread removes the thread and the threads block', async () => {
 });
 
 test('add-thread with an anchor wraps the quote in highlight markup before the block', async () => {
-  const thread = await addThread({
+  const { result: thread, reload } = await call('threads:add-thread', {
+    file: project.file,
+    author: 'alice',
     body: 'This is important',
     anchor: {
       quote: 'verify core engine changes',
@@ -192,6 +203,7 @@ test('add-thread with an anchor wraps the quote in highlight markup before the b
       blockText: 'This playground is used to verify core engine changes in real-time.',
     },
   });
+  assert.equal(reload, true);
   const content = read();
   const mark = `==verify core engine changes=={${thread.id}}`;
   assert.ok(content.includes(mark), content);
@@ -215,13 +227,13 @@ test('add-thread anchor does not match text inside an existing threads block', a
 });
 
 test('delete-thread removes the highlight markup but keeps the text', async () => {
-  const thread = await addThread({ anchor: { quote: 'core engine' } });
-  assert.ok(read().includes(`==core engine=={${thread.id}}`));
+  const thread = await addThread({ anchor: { quote: 'verify core engine changes' } });
+  assert.ok(read().includes(`==verify core engine changes=={${thread.id}}`));
 
   await call('threads:delete-thread', { file: project.file, threadId: thread.id });
   const content = read();
-  assert.ok(!content.includes('==core engine=={'));
-  assert.ok(content.includes('core engine'));
+  assert.ok(!content.includes('==verify core engine changes=={'));
+  assert.ok(content.includes('verify core engine changes'));
 });
 
 test('input validation rejects missing fields', async () => {

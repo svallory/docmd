@@ -8,10 +8,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(here, '..', 'e2e', 'fixtures', 'playground-index.md');
 
 /** markdown-it is a dependency of @docmd/parser, not of this plugin. */
-const parserRequire = createRequire(path.resolve(here, '..', '..', '..', 'parser', 'package.json'));
-export const MarkdownIt = parserRequire('markdown-it');
-
-export const today = new Date().toISOString().split('T')[0];
+function loadMarkdownIt() {
+  try {
+    return createRequire(path.resolve(here, '..', '..', '..', 'parser', 'package.json'))('markdown-it');
+  } catch (err) {
+    throw new Error(`markdown-it not resolvable via @docmd/parser (packages/parser moved or dropped it?): ${err}`);
+  }
+}
+export const MarkdownIt = loadMarkdownIt();
 
 export interface TempProject {
   root: string;
