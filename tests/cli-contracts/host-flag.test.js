@@ -92,6 +92,7 @@ export const test = runTestFile({
     {
       const help = execFileSync(process.execPath, [DOCMD, '--help'], { encoding: 'utf8' });
       assert(/--host/.test(help), 'AC-2: `docmd --help` lists --host');
+      assert(/^\s*serve\b/m.test(help) && /dev\/serve/.test(help), 'AC-33: `docmd --help` lists serve and the stop line mentions dev/serve');
     }
 
     // A valueless --host is rejected instead of being passed to listen().
@@ -141,6 +142,37 @@ export const test = runTestFile({
         assert(/no-cache/.test(root.headers['cache-control'] || ''), 'AC-15: GET / carries Cache-Control: no-cache');
         const api = await get(port, '/__dev/docmd-api.js');
         assert(api.status === 200, 'AC-15: GET /__dev/docmd-api.js is 200');
+      } finally {
+        child.kill('SIGTERM');
+        await exited;
+      }
+    }
+
+    // AC-2 (serve): `serve --host 0.0.0.0` binds all interfaces.
+    {
+      const dir = setup('host-flag-serve');
+      writeFile(dir, 'docs/index.md', '# Hi\n');
+      writeFile(dir, 'docmd.config.json', JSON.stringify({ title: 'Host', src: './docs', out: './site' }, null, 2) + '\n');
+      const port = await freePort();
+      const env = { ...process.env };
+      delete env.DOCMD_HOST;
+      delete env.DOCMD_PROJECT_OUT;
+      delete env.PORT;
+      const child = spawn(process.execPath, [DOCMD, 'serve', '--host', '0.0.0.0', '--port', String(port)], {
+        cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe']
+      });
+      const output = { text: '' };
+      child.stdout.on('data', (c) => { output.text += c; });
+      child.stderr.on('data', (c) => { output.text += c; });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      try {
+        await waitForHttp(port, child, output);
+        const lan = lanIPv4();
+        if (lan) {
+          assert(await canConnect(lan, port), `AC-2: serve --host 0.0.0.0 accepts a connection on ${lan}:${port}`);
+        } else {
+          assert(false, 'AC-2: no non-loopback IPv4 interface; cannot verify serve --host binding');
+        }
       } finally {
         child.kill('SIGTERM');
         await exited;
