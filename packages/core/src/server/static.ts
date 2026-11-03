@@ -82,12 +82,12 @@ function matchesEtag(header: string | string[] | undefined, etag: string): boole
  */
 export function createStaticHandler(opts: StaticHandlerOptions) {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const isHead = req.method === 'HEAD';
     res.setHeader('X-Content-Type-Options', 'nosniff');
 
     const send = (status: number, headers: Record<string, string | number>, body?: string | Buffer) => {
       res.writeHead(status, headers);
-      res.end(isHead || body === undefined ? undefined : body);
+      // HEAD: Node's http server drops the body itself, headers are unchanged.
+      res.end(body);
     };
 
     // Split the raw request target ourselves: `new URL()` would collapse
@@ -155,11 +155,11 @@ export function createStaticHandler(opts: StaticHandlerOptions) {
       }
 
       if (stats.isDirectory()) {
-        const urlParts = (req.url || '/').split('?');
-        if (!urlParts[0].endsWith('/')) {
-          const safeRedirect = `${urlParts[0]}/${urlParts[1] ? `?${urlParts[1]}` : ''}`;
-          if (safeRedirect.startsWith('/') && !safeRedirect.startsWith('//')) {
-            send(301, { 'Location': safeRedirect });
+        if (!rawPath.endsWith('/')) {
+          const q = (req.url || '').split('?')[1];
+          const loc = `${rawPath}/${q ? `?${q}` : ''}`;
+          if (!loc.startsWith('//')) {
+            send(301, { 'Location': loc });
             return;
           }
         }

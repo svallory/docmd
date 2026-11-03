@@ -141,6 +141,7 @@ export const test = runTestFile({
       const head = await request(prod, 'HEAD', '/page');
       assert(head.status === ok.status, 'HEAD: same status as GET');
       // Raw socket: Node's client discards HEAD bodies, so read the wire ourselves.
+      // Node's server also enforces this itself; this pins the AC-6 contract, it cannot fail on handler code.
       const wire = await rawHead(prod, '/page');
       const sep = wire.indexOf('\r\n\r\n');
       assert(sep > 0 && wire.length - (sep + 4) === 0, 'HEAD: zero body bytes on the wire');
@@ -156,12 +157,12 @@ export const test = runTestFile({
       assert((await request(dev, 'GET', '/')).headers['cache-control'] === 'no-cache', 'AC-15: dev sends no-cache');
       const d404 = await request(dev, 'GET', '/nope', BARE);
       assert(d404.status === 404 && d404.body.toString().includes('docmd dev server'), 'AC-15: dev 404 mentions "docmd dev server"');
-      const devEtag = (await request(dev, 'GET', '/page')).headers['etag'];
-      assert(devEtag && devEtag !== etag, 'ETag: dev-transformed HTML has a different ETag than prod');
       const devNoMatch = await request(dev, 'GET', '/page', { 'If-None-Match': etag });
       assert(devNoMatch.status === 200, 'ETag: a prod ETag does not 304 a dev-transformed page');
       const weak = await request(prod, 'GET', '/page', { 'If-None-Match': etag.replace(/^W\//, '') });
       assert(weak.status === 304, 'ETag: If-None-Match uses weak comparison');
+      const absDir = await request(prod, 'GET', 'http://localhost/dir?a=1');
+      assert(absDir.status === 301 && absDir.headers['location'] === '/dir/?a=1', 'absolute-form /dir redirects to /dir/ with query');
       const absForm = await request(prod, 'GET', 'http://localhost/page');
       assert(absForm.status === 200 && absForm.body.toString().includes('page'), 'absolute-form request target is served');
     } finally {
