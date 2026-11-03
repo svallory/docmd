@@ -12,6 +12,13 @@ export interface DraftStore {
   /** Merge fields into an existing op, selected by `patch.opId`. */
   update(key: string, patch: { opId: string } & Record<string, unknown>): Promise<Journal>;
   removeOp(key: string, opId: string | string[]): Promise<Journal>;
+  /**
+   * One locked read-modify-write cycle: `fn` sees the journal and the cycle's
+   * timestamp, may change `ops`, and `review.updatedAt` is stamped after it.
+   * A throw leaves the file untouched. Use it whenever a decision depends on
+   * the journal's current content.
+   */
+  transact(key: string, fn: (journal: Journal, at: string) => void): Promise<Journal>;
   /** Delete the journal (after publish or discard). */
   clear(key: string): Promise<void>;
   setMode(key: string, mode: DraftMode): Promise<Journal>;
@@ -21,14 +28,17 @@ export interface DraftStore {
 export interface DraftStoreOptions {
   /** Clock, epoch ms. */
   now?: () => number;
-  /** Mode of a new journal. */
-  defaultMode?: DraftMode;
+  /** Mode of a new journal; a function is read on every fresh journal. */
+  defaultMode?: DraftMode | (() => DraftMode);
 }
 
 /** File name stem for a key. */
 export const slug = (key: string): string => encodeURIComponent(key).replace(/%/g, '_');
 
 const hex = (prefix: string) => prefix + crypto.randomBytes(4).toString('hex');
+
+/** Complete an op with its id and timestamp. */
+export const makeOp = (op: NewDraftOp, at: string): DraftOp => ({ ...op, opId: hex('o-'), at }) as DraftOp;
 
 export function createDraftStore(
   docsRoot: string,
@@ -51,7 +61,7 @@ export function createDraftStore(
     return {
       version: 1,
       authorKey: key,
-      mode: defaultMode,
+      mode: typeof defaultMode === 'function' ? defaultMode() : defaultMode,
       review: { id: hex('r-'), title: null, summary: null, createdAt: at, updatedAt: at },
       ops: [],
     };
@@ -103,9 +113,10 @@ export function createDraftStore(
 
   return {
     load: (key) => locked(() => read(key)),
+    transact: mutate,
     append: (key, op) =>
       mutate(key, (j, at) => {
-        j.ops.push({ ...op, opId: hex('o-'), at } as DraftOp);
+        j.ops.push(makeOp(op, at));
       }),
     update: (key, patch) =>
       mutate(key, (j) => {

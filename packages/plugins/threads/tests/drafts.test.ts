@@ -37,12 +37,12 @@ test('append writes <slug>.json atomically, writes .gitignore once, and git igno
 
   const ignore = path.join(draftsDir(), '.gitignore');
   assert.equal(fs.readFileSync(ignore, 'utf8'), '*\n!.gitignore\n');
-  const before = fs.statSync(ignore).mtimeMs;
-  await s.append(key, addThread);
-  assert.equal(fs.statSync(ignore).mtimeMs, before, '.gitignore is not rewritten');
-
-  assert.deepEqual(fs.readdirSync(draftsDir()).filter((f) => f.endsWith('.tmp')), []);
   assert.equal(spawnSync('git', ['check-ignore', '-q', file], { cwd: project.root }).status, 0);
+  fs.writeFileSync(ignore, '# operator edit\n');
+  await s.append(key, addThread);
+  assert.equal(fs.readFileSync(ignore, 'utf8'), '# operator edit\n', '.gitignore is written once, never overwritten');
+  assert.deepEqual(fs.readdirSync(draftsDir()).filter((f) => f.endsWith('.tmp')), []);
+
 });
 
 test('a journal survives a new store instance', async () => {

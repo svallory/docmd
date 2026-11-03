@@ -18,7 +18,6 @@ import path from 'node:path';
 import { tempProject, makeCtx, type TempProject } from './helpers.ts';
 import { actions } from '../src/plugin/actions.ts';
 import { createDraftStore } from '../src/plugin/drafts.ts';
-import { overlay } from '../src/plugin/overlay.ts';
 import * as plugin from '../src/index.ts';
 
 let project: TempProject;
@@ -95,10 +94,12 @@ test('get-threads overlays the drafter only, and the result is the same from dis
   assert.deepEqual(theirs.map((t: any) => t.id), ['t-thread1', 't-thread2', 't-thread3']);
   assert.ok(theirs.every((t: any) => !t.draft && t.comments.every((c: any) => !c.draft)));
 
-  // reload: a store built from the files on disk gives the identical view
-  const published = await call('threads:get-threads', f());
-  const reloaded = overlay(published, (await createDraftStore(path.join(project.root, 'docs')).load('k-alice')).ops, project.file, { key: 'k-alice', name: 'Alice' });
-  assert.deepEqual(reloaded, mine);
+  // reload: the handlers keep no state beyond a lock, so a second call reads the journal back from disk
+  const again = await call('threads:get-threads', { ...f(), ...ALICE });
+  assert.deepEqual(again, mine);
+  assert.deepEqual(again.map((t: any) => t.id), ['t-thread1', 't-thread2', 't-thread3', thread.id]);
+  assert.equal(again[3].draft, true);
+  assert.deepEqual(again[0].comments.map((c: any) => c.draft), [undefined, undefined, true]);
 });
 
 test('mutations on published targets append an op of their kind', async () => {
@@ -112,6 +113,36 @@ test('mutations on published targets append an op of their kind', async () => {
   assert.deepEqual(ops.map((o) => o.kind), ['edit-comment', 'resolve-thread', 'toggle-reaction', 'delete-comment', 'delete-thread']);
 });
 
+test('deleting a published comment first drops the caller\'s earlier ops on it', async () => {
+  const t = { ...f(), ...ALICE, threadId: 't-thread1', commentId: 'c1-1' };
+  await call('threads:edit-comment', { ...t, body: 'edited' });
+  await call('threads:toggle-reaction', { ...t, emoji: '👍' });
+  await call('threads:delete-comment', t);
+  assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['delete-comment']);
+});
+
+test('deleting a published thread drops the caller\'s drafted comments on it', async () => {
+  await call('threads:add-comment', { ...f(), ...ALICE, threadId: 't-thread1', body: 'mine' });
+  await call('threads:delete-thread', { ...f(), ...ALICE, threadId: 't-thread1' });
+  assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['delete-thread']);
+});
+
+test('deleting a comment also deletes the caller\'s drafted replies to it', async () => {
+  const thread = await draftThread();
+  const parent = await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'p' });
+  const child = await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'c', parentId: parent.id });
+  await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'grandchild', parentId: child.id });
+  await call('threads:delete-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: parent.id });
+  assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
+});
+
+test('concurrent toggles of one reaction on a drafted comment cancel out', async () => {
+  const thread = await draftThread();
+  const t = { ...f(), ...ALICE, threadId: thread.id, commentId: thread.comments[0].id, emoji: '👍' };
+  await Promise.all([call('threads:toggle-reaction', t), call('threads:toggle-reaction', t)]);
+  assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
+});
+
 test('mutations on drafted targets change the draft instead of growing the journal', async () => {
   const thread = await draftThread();
   const reply = await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'second' });
@@ -123,19 +154,33 @@ test('mutations on drafted targets change the draft instead of growing the journ
   const ops = (await journalOf('k-alice')).ops as any[];
   assert.deepEqual([ops.length, ops[1].kind, ops[1].body], [2, 'add-comment', 'second, fixed']);
 
-  // resolve and react toggle on and off without growing past one op
+  // resolve toggles on and off without growing the journal
   await call('threads:resolve-thread', { ...f(), ...ALICE, threadId: thread.id });
   assert.equal(await opCount(), 3);
   const off = await call('threads:resolve-thread', { ...f(), ...ALICE, threadId: thread.id });
   assert.equal(off.resolved, false);
   assert.equal(await opCount(), 2);
 
+  // a reaction on a drafted comment toggles on and off the same way
+  const react = () => call('threads:toggle-reaction', { ...f(), ...ALICE, threadId: thread.id, commentId: reply.id, emoji: '👍' });
+  assert.deepEqual(await react(), [{ emoji: '👍', authors: ['Alice'] }]);
+  assert.equal(await opCount(), 3);
+  assert.deepEqual(await react(), []);
+  assert.equal(await opCount(), 2);
+
   await call('threads:delete-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: reply.id });
   assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
 
-  await call('threads:delete-thread', { ...f(), ...ALICE, threadId: thread.id });
+  // deleting the first comment of a drafted thread removes the thread
+  await call('threads:delete-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: thread.comments[0].id });
   assert.equal(await opCount(), 0);
   assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((t: any) => t.id === thread.id));
+
+  const second = await draftThread(ALICE, 'again');
+
+  await call('threads:delete-thread', { ...f(), ...ALICE, threadId: second.id });
+  assert.equal(await opCount(), 0);
+  assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((t: any) => t.id === second.id));
 });
 
 test('whoami reports the payload identity and journal, or nulls without one', async () => {

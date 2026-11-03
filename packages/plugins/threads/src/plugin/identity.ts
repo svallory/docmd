@@ -32,3 +32,10 @@ export function resolveCaller(ctx: unknown, payload: Record<string, any> | null 
 export function profileFromPayload(payload: Record<string, any>): { key: string; name: string; avatarUrl: string | undefined } {
   return { key: payload.authorKey, name: payload.name, avatarUrl: payload.avatarUrl };
 }
+
+/** The profile a payload caller supplies with an explicit `authorKey` (dev mode), else null. */
+export function payloadProfile(payload: Record<string, any>): { key: string; name: string; avatarUrl: string } | null {
+  const key = str(payload?.authorKey);
+  const name = str(payload?.author);
+  return key && name ? { key, name, avatarUrl: str(payload?.avatarUrl) ?? '' } : null;
+}
