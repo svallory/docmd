@@ -7,7 +7,7 @@ import { ThreadsError } from './errors.js';
 import { getOptions } from './config.js';
 import { createDraftStore, type DraftStore } from './drafts.js';
 import { overlay } from './overlay.js';
-import { findCaller, resolveCaller } from './identity.js';
+import { findCaller, profileFromPayload, resolveCaller } from './identity.js';
 import type { Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, WhoAmI } from '../types.js';
 
 interface AuthorsMap {
@@ -151,7 +151,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   'threads:upsert-author': async (payload, ctx): Promise<{ ok: boolean }> => {
     requireFields('threads:upsert-author', payload, ['authorKey', 'name']);
-    await upsertAuthor(ctx, payload.authorKey, payload.name, payload.avatarUrl);
+    const profile = profileFromPayload(payload);
+    await upsertAuthor(ctx, profile.key, profile.name, profile.avatarUrl);
     return { ok: true };
   },
 
