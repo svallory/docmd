@@ -121,7 +121,8 @@ test.describe("thread deletion", () => {
     await user.page.evaluate(
       async ({ threadId }) => {
         const file = document.body.dataset["sourceFile"];
-        await docmd.call("threads:delete-thread", { file, threadId });
+        await docmd.call("threads:delete-thread", { file, threadId, author: "TestUser" });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId },
     );
@@ -157,7 +158,8 @@ test.describe("comment deletion", () => {
     await user.page.evaluate(
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
-        await docmd.call("threads:delete-comment", { file, threadId, commentId });
+        await docmd.call("threads:delete-comment", { file, threadId, commentId, author: "TestUser" });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId: replyId },
     );
@@ -200,7 +202,9 @@ test.describe("comment editing", () => {
           threadId,
           commentId,
           body: newBody,
+          author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId, newBody },
     );
@@ -236,7 +240,9 @@ test.describe("comment editing", () => {
             threadId,
             commentId,
             body: "",
+            author: "TestUser",
           });
+          await docmd.call("threads:publish-review", { author: "TestUser" });
         },
         { threadId, commentId },
       );

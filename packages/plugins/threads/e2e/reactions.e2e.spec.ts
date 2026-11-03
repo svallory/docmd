@@ -39,13 +39,15 @@ test.describe("emoji reactions API", () => {
     const reactions = await user.page.evaluate(
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:toggle-reaction", {
+        const __result = await docmd.call("threads:toggle-reaction", {
           file,
           threadId,
           commentId,
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
+        return __result;
       },
       { threadId, commentId },
     );
@@ -74,6 +76,7 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
@@ -85,13 +88,15 @@ test.describe("emoji reactions API", () => {
     const reactions = await user.page.evaluate(
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:toggle-reaction", {
+        const __result = await docmd.call("threads:toggle-reaction", {
           file,
           threadId,
           commentId,
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
+        return __result;
       },
       { threadId, commentId },
     );
@@ -119,6 +124,7 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
@@ -130,13 +136,15 @@ test.describe("emoji reactions API", () => {
     const reactions = await user.page.evaluate(
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:toggle-reaction", {
+        const __result = await docmd.call("threads:toggle-reaction", {
           file,
           threadId,
           commentId,
           emoji: "\ud83c\udf89",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
+        return __result;
       },
       { threadId, commentId },
     );
@@ -164,6 +172,7 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
@@ -205,6 +214,7 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
@@ -216,13 +226,15 @@ test.describe("emoji reactions API", () => {
     const reactions = await user.page.evaluate(
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:toggle-reaction", {
+        const __result = await docmd.call("threads:toggle-reaction", {
           file,
           threadId,
           commentId,
           emoji: "\ud83d\udc4d",
           author: "Alice",
         });
+        await docmd.call("threads:publish-review", { author: "Alice" });
+        return __result;
       },
       { threadId, commentId },
     );
@@ -255,6 +267,7 @@ test.describe("server-rendered reactions", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );

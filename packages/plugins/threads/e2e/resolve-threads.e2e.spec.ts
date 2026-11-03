@@ -35,11 +35,14 @@ test.describe("resolve thread API", () => {
     const resolved = await user.page.evaluate(
       async ({ threadId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:resolve-thread", {
+        const __result = await docmd.call("threads:resolve-thread", {
           file,
           threadId,
           resolved_by: "TestUser",
+          author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
+        return __result;
       },
       { threadId },
     );
@@ -70,11 +73,14 @@ test.describe("resolve thread API", () => {
     const unresolved = await user.page.evaluate(
       async ({ threadId }) => {
         const file = document.body.dataset["sourceFile"];
-        return docmd.call("threads:resolve-thread", {
+        const __result = await docmd.call("threads:resolve-thread", {
           file,
           threadId,
           resolved_by: "TestUser",
+          author: "TestUser",
         });
+        await docmd.call("threads:publish-review", { author: "TestUser" });
+        return __result;
       },
       { threadId },
     );

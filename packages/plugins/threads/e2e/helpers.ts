@@ -32,6 +32,21 @@ export async function cleanThreads(_page: Page): Promise<void> {
 }
 
 /**
+ * Publish the open review of `author` (comments are drafts until published).
+ * Resolves with the publish result, or null when the author has nothing to publish.
+ */
+export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string } | null> {
+  return page.evaluate(async (a) => {
+    try {
+      return await docmd.call("threads:publish-review", { author: a });
+    } catch (err) {
+      if (String(err instanceof Error ? err.message : err).includes("threads/empty-review")) return null;
+      throw err;
+    }
+  }, author);
+}
+
+/**
  * Seed a thread via the WebSocket action dispatcher.
  * Must be called after the page is loaded and docmd global is available.
  *
@@ -84,6 +99,9 @@ export async function seedThread(
     { author, body, anchor },
   );
 
+  // Comments are drafts until published; replies need the thread to be in the file.
+  await publishReview(page, author);
+
   const commentIds = [thread.comments[0].id];
 
   // Step 2: Add replies one at a time, reloading the page between each
@@ -111,6 +129,7 @@ export async function seedThread(
       },
     );
     commentIds.push(comment.id);
+    await publishReview(page, reply.author ?? "TestUser");
   }
 
   // Step 3: Resolve if requested
@@ -127,12 +146,16 @@ export async function seedThread(
         return docmd.call("threads:resolve-thread", {
           file,
           threadId,
+          author: resolvedBy,
           resolved_by: resolvedBy,
         });
       },
       { threadId: thread.id, resolvedBy: author },
     );
   }
+
+  // Resolving is a draft op too: publish it.
+  if (resolved) await publishReview(page, author);
 
   return {
     id: thread.id,
