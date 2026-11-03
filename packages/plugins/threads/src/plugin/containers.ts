@@ -14,6 +14,8 @@ interface CommentInfo {
   author: string;
   date: string;
   editedAt: string | null;
+  authorKey: string | null;
+  reviewId: string | null;
 }
 
 function smartDedent(str: string): string {
@@ -120,6 +122,36 @@ function setupSafeCommentContainer(md: any): void {
 }
 
 /**
+ * `::: anchor` - the quoted text a thread was anchored to. Rendered as plain
+ * escaped text in a blockquote (no inner markdown).
+ */
+function setupAnchorContainer(md: any): void {
+  md.block.ruler.before('fence', 'custom_anchor', (state: any, startLine: number, endLine: number, silent: boolean) => {
+    const start = state.bMarks[startLine] + state.tShift[startLine];
+    const lineContent = state.src.slice(start, state.eMarks[startLine]).trim();
+    if (!/^:::\s*anchor$/.test(lineContent)) return false;
+
+    let nextLine = startLine + 1;
+    while (nextLine < endLine) {
+      const s = state.bMarks[nextLine] + state.tShift[nextLine];
+      if (state.src.slice(s, state.eMarks[nextLine]).trim() === ':::') break;
+      nextLine++;
+    }
+    if (nextLine >= endLine) return false;
+    if (silent) return true;
+
+    let raw = '';
+    for (let i = startLine + 1; i < nextLine; i++) {
+      raw += state.src.slice(state.bMarks[i], state.eMarks[i]) + '\n';
+    }
+    const token = state.push('html_block', '', 0);
+    token.content = `<blockquote class="threads-anchor">${md.utils.escapeHtml(smartDedent(raw))}</blockquote>\n`;
+    state.line = nextLine + 1;
+    return true;
+  }, { alt: ['paragraph', 'reference', 'blockquote', 'list'] });
+}
+
+/**
  * Parse a thread info string.
  * Format: `<id> [resolved "<by>" "<date>"]`
  */
@@ -152,14 +184,14 @@ export function parseThreadInfo(info: string): ThreadInfo {
 
 /**
  * Parse a comment info string.
- * Format: `[<id>] "<author>" "<date>" [reply-to <parentId>] [edited "<date>"]`
+ * Format: `[<id>] "<author>" "<date>" [reply-to <parentId>] [edited "<date>"] [by <authorKey>] [review <reviewId>]`
  */
 export function parseCommentInfo(info: string): CommentInfo {
   const trimmed = info.trim();
 
   // Format with ID, optional reply-to, optional edited
   const fullMatch = trimmed.match(
-    /^(\S+)\s+"([^"]+)"\s+"([^"]+)"(?:\s+reply-to\s+(\S+))?(?:\s+edited\s+"([^"]+)")?$/
+    /^(\S+)\s+"([^"]+)"\s+"([^"]+)"(?:\s+reply-to\s+(\S+))?(?:\s+edited\s+"([^"]+)")?(?:\s+by\s+(\S+))?(?:\s+review\s+(\S+))?$/
   );
   if (fullMatch) {
     return {
@@ -168,6 +200,8 @@ export function parseCommentInfo(info: string): CommentInfo {
       date: fullMatch[3],
       parentId: fullMatch[4] || null,
       editedAt: fullMatch[5] || null,
+      authorKey: fullMatch[6] || null,
+      reviewId: fullMatch[7] || null,
     };
   }
 
@@ -182,6 +216,8 @@ export function parseCommentInfo(info: string): CommentInfo {
       author: editedMatch[1],
       date: editedMatch[2],
       editedAt: editedMatch[3],
+      authorKey: null,
+      reviewId: null,
     };
   }
 
@@ -194,10 +230,12 @@ export function parseCommentInfo(info: string): CommentInfo {
       author: simpleMatch[1],
       date: simpleMatch[2],
       editedAt: null,
+      authorKey: null,
+      reviewId: null,
     };
   }
 
-  return { id: null, parentId: null, author: 'unknown', date: '', editedAt: null };
+  return { id: null, parentId: null, author: 'unknown', date: '', editedAt: null, authorKey: null, reviewId: null };
 }
 
 /**
@@ -225,6 +263,9 @@ export function setup(md: any): void {
     },
     () => '</div>\n'
   );
+
+  // 2b. anchor - first child of a thread
+  setupAnchorContainer(md);
 
   // 3. comment - individual comment
   setupSafeCommentContainer(md);

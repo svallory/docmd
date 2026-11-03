@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  parseCommentInfo,
   parseThreadsFromContent,
   serializeThreadsBlock,
   replaceThreadsBlock,
@@ -25,7 +26,6 @@ Some content here.
       :::
     :::
   :::
-
   ::: thread t-def456 resolved "charlie" "2026-03-08"
     ::: comment "charlie" "2026-03-08"
       Typo in this section
@@ -242,4 +242,60 @@ test('comment ids are unique', () => {
     }
   }
   assert.equal(ids.size, 3);
+});
+
+const v2Line = 'comment c-1 "Alice" "2026-01-02" reply-to c-0 edited "2026-01-03" by alice@x.y review r-0000aaaa';
+
+test('v2 comment line parses authorKey and reviewId', () => {
+  const info = parseCommentInfo(v2Line);
+  assert.equal(info?.id, 'c-1');
+  assert.equal(info?.parent_id, 'c-0');
+  assert.equal(info?.edited_at, '2026-01-03');
+  assert.equal(info?.authorKey, 'alice@x.y');
+  assert.equal(info?.reviewId, 'r-0000aaaa');
+});
+
+const tokenCases: Array<[string, string, string]> = [
+  ['none', '', ''],
+  ['reply-to', ' reply-to c-0', ''],
+  ['edited', ' edited "2026-01-03"', ''],
+  ['by', ' by alice@x.y', ''],
+  ['review', ' review r-0000aaaa', ''],
+  ['all', ' reply-to c-0 edited "2026-01-03" by alice@x.y review r-0000aaaa', ''],
+];
+for (const [name, tokens] of tokenCases.map(([n, t]) => [n, t] as const)) {
+  test(`comment tokens serialise in fixed order: ${name}`, () => {
+    const line = `comment c-1 "Alice" "2026-01-02"${tokens}`;
+    const info = parseCommentInfo(line)!;
+    const content = `::: threads\n  ::: thread t-1\n    ::: ${line}\n      hi\n    :::\n  :::\n:::\n`;
+    const [t] = parseThreadsFromContent(content);
+    assert.equal(t.comments[0].authorKey, info.authorKey ?? undefined);
+    assert.equal(t.comments[0].reviewId, info.reviewId ?? undefined);
+    assert.equal(serializeThreadsBlock([t]), content);
+  });
+}
+
+test('anchor child parses to thread.anchor and serialises first, only when set', () => {
+  const content = `::: threads
+  ::: thread t-1
+    ::: anchor
+      quoted text
+    :::
+
+    ::: comment c-1 "Alice" "2026-01-02"
+      hi
+    :::
+  :::
+  ::: thread t-2
+    ::: comment c-2 "Bob" "2026-01-02"
+      yo
+    :::
+  :::
+:::
+`;
+  const [t1, t2] = parseThreadsFromContent(content);
+  assert.deepEqual(t1.anchor, { quote: 'quoted text' });
+  assert.equal(t1.comments.length, 1);
+  assert.equal(t2.anchor, undefined);
+  assert.equal(serializeThreadsBlock([t1, t2]), content);
 });

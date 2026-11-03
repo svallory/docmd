@@ -232,3 +232,37 @@ test('comment with id and edited', () => {
   has(html14, 'data-author="bob"');
   has(html14, 'data-edited="2026-03-08"');
 });
+
+test('anchor renders as blockquote.threads-anchor inside the thread', () => {
+  const html = md.render(`::: threads
+  ::: thread t-anc
+    ::: anchor
+      quoted <b>text</b>
+    :::
+
+    ::: comment c-1 "alice" "2026-01-01" by alice review r-0000aaaa
+      hi
+    :::
+  :::
+:::
+`);
+  has(html, '<blockquote class="threads-anchor">quoted &lt;b&gt;text&lt;/b&gt;</blockquote>');
+  assert.ok(html.indexOf('threads-thread') < html.indexOf('threads-anchor'));
+  assert.ok(html.indexOf('threads-anchor') < html.indexOf('threads-comment"'));
+  lacks(html, '<p>:::');
+  lacks(html, '<p>quoted');
+  has(html, 'data-author="alice"');
+  lacks(html, 'data-author="unknown"');
+});
+
+test('thread without anchor renders no anchor element', () => {
+  const html = md.render(`::: threads
+  ::: thread t-none
+    ::: comment c-1 "alice" "2026-01-01"
+      hi
+    :::
+  :::
+:::
+`);
+  lacks(html, 'threads-anchor');
+});
