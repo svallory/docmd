@@ -4,7 +4,7 @@
  *   add-comment appends / get-threads returns both      -> same + "get-threads overlays the drafter only" (AC-8)
  *   edit-comment, delete-comment, delete-thread,
  *   resolve-thread, toggle-reaction                     -> "mutations on published targets append ops" and
- *                                                          "mutations on drafted targets change the draft" (A-1);
+ *                                                          "drafted target: ..." cases (A-1);
  *                                                          the transformation itself: overlay.test.ts
  *   add-thread highlight markup / delete-thread
  *   unwrapping the highlight                            -> moved to publish (the markdown is no longer written here)
@@ -143,45 +143,51 @@ test('concurrent toggles of one reaction on a drafted comment cancel out', async
   assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
 });
 
-test('mutations on drafted targets change the draft instead of growing the journal', async () => {
-  const thread = await draftThread();
-  const reply = await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'second' });
-  const opCount = async () => (await journalOf('k-alice')).ops.length;
-  assert.equal(await opCount(), 2);
-
-  const edited = await call('threads:edit-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: reply.id, body: 'second, fixed' });
-  assert.equal(edited.body, 'second, fixed');
-  const ops = (await journalOf('k-alice')).ops as any[];
-  assert.deepEqual([ops.length, ops[1].kind, ops[1].body], [2, 'add-comment', 'second, fixed']);
-
-  // resolve toggles on and off without growing the journal
-  await call('threads:resolve-thread', { ...f(), ...ALICE, threadId: thread.id });
-  assert.equal(await opCount(), 3);
-  const off = await call('threads:resolve-thread', { ...f(), ...ALICE, threadId: thread.id });
-  assert.equal(off.resolved, false);
-  assert.equal(await opCount(), 2);
-
-  // a reaction on a drafted comment toggles on and off the same way
-  const react = () => call('threads:toggle-reaction', { ...f(), ...ALICE, threadId: thread.id, commentId: reply.id, emoji: '👍' });
-  assert.deepEqual(await react(), [{ emoji: '👍', authors: ['Alice'] }]);
-  assert.equal(await opCount(), 3);
-  assert.deepEqual(await react(), []);
-  assert.equal(await opCount(), 2);
-
-  await call('threads:delete-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: reply.id });
-  assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
-
-  // deleting the first comment of a drafted thread removes the thread
-  await call('threads:delete-comment', { ...f(), ...ALICE, threadId: thread.id, commentId: thread.comments[0].id });
-  assert.equal(await opCount(), 0);
-  assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((t: any) => t.id === thread.id));
-
-  const second = await draftThread(ALICE, 'again');
-
-  await call('threads:delete-thread', { ...f(), ...ALICE, threadId: second.id });
-  assert.equal(await opCount(), 0);
-  assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((t: any) => t.id === second.id));
-});
+// A-1, drafted targets: each case starts from a fresh drafted thread (+ a drafted reply) and checks the journal.
+const drafted: Array<[string, (t: any, reply: any) => Promise<void>]> = [
+  ['edit changes the add-comment op body', async (t, reply) => {
+    const edited = await call('threads:edit-comment', { ...f(), ...ALICE, threadId: t.id, commentId: reply.id, body: 'fixed' });
+    assert.equal(edited.body, 'fixed');
+    const ops = (await journalOf('k-alice')).ops as any[];
+    assert.deepEqual([ops.length, ops[1].kind, ops[1].body], [2, 'add-comment', 'fixed']);
+  }],
+  ['resolve toggles on and off', async (t) => {
+    const resolve = () => call('threads:resolve-thread', { ...f(), ...ALICE, threadId: t.id });
+    assert.equal((await resolve()).resolved, true);
+    assert.equal((await journalOf('k-alice')).ops.length, 3);
+    assert.equal((await resolve()).resolved, false);
+    assert.equal((await journalOf('k-alice')).ops.length, 2);
+  }],
+  ['reaction toggles on and off', async (t, reply) => {
+    const react = () => call('threads:toggle-reaction', { ...f(), ...ALICE, threadId: t.id, commentId: reply.id, emoji: '👍' });
+    assert.deepEqual(await react(), [{ emoji: '👍', authors: ['Alice'] }]);
+    assert.equal((await journalOf('k-alice')).ops.length, 3);
+    assert.deepEqual(await react(), []);
+    assert.equal((await journalOf('k-alice')).ops.length, 2);
+  }],
+  ['delete-comment removes the reply op', async (t, reply) => {
+    await call('threads:delete-comment', { ...f(), ...ALICE, threadId: t.id, commentId: reply.id });
+    assert.deepEqual((await journalOf('k-alice')).ops.map((o) => o.kind), ['add-thread']);
+  }],
+  ['delete-comment of the first comment removes the thread', async (t) => {
+    await call('threads:delete-comment', { ...f(), ...ALICE, threadId: t.id, commentId: t.comments[0].id });
+    assert.equal((await journalOf('k-alice')).ops.length, 0);
+    assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((x: any) => x.id === t.id));
+  }],
+  ['delete-thread removes every op on it', async (t) => {
+    await call('threads:delete-thread', { ...f(), ...ALICE, threadId: t.id });
+    assert.equal((await journalOf('k-alice')).ops.length, 0);
+    assert.ok(!(await call('threads:get-threads', { ...f(), ...ALICE })).some((x: any) => x.id === t.id));
+  }],
+];
+for (const [name, run] of drafted) {
+  test(`drafted target: ${name}`, async () => {
+    const thread = await draftThread();
+    const reply = await call('threads:add-comment', { ...f(), ...ALICE, threadId: thread.id, body: 'second' });
+    assert.equal((await journalOf('k-alice')).ops.length, 2);
+    await run(thread, reply);
+  });
+}
 
 test('whoami reports the payload identity and journal, or nulls without one', async () => {
   const withId = await call('threads:whoami', ALICE);
