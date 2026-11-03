@@ -40,7 +40,15 @@ function withResolvedAssets<T extends object>(ctx: T, assets: readonly ResolvedA
   }) as T & { readonly resolvedAssets: readonly ResolvedAsset[] };
 }
 
-export async function buildSite(configPath: string, opts: any = {}) {
+export interface BuildSiteOptions {
+  isDev?: boolean;
+  quiet?: boolean;
+  /** Keep live-server plugin assets and ship the docmd-api.js bridge (programmatic only; no CLI flag). */
+  liveServer?: boolean;
+  [k: string]: any;
+}
+
+export async function buildSite(configPath: string, opts: BuildSiteOptions = {}) {
 
   // Defaults to prevent ReferenceErrors
   const options = {
@@ -149,7 +157,10 @@ export async function buildSite(configPath: string, opts: any = {}) {
         src: resolveUiAsset('js/docmd-api.js'),
         dest: 'assets/js/docmd-api.js',
         type: 'js',
-        location: 'body'
+        location: 'body',
+        // Below the plugin default (20; generator sorts ascending) so the bridge
+        // always loads before plugin body scripts that touch window.docmd.
+        priority: 15
       }];
       (bridge as any)._pluginName = 'docmd-api';
       hooks.assets.push(bridge as any);
