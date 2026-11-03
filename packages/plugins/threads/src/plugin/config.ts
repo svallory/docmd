@@ -120,3 +120,8 @@ export function normalizeOptions(rawInput?: unknown): ThreadsOptions {
     git,
   };
 }
+
+/** The normalized plugin options for the project an action call belongs to. */
+export function getOptions(ctx: { config?: any }): ThreadsOptions {
+  return normalizeOptions(ctx.config?.plugins?.threads);
+}
