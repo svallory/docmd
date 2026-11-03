@@ -23,6 +23,8 @@ import { loadConfig } from '../utils/config-loader.js';
 import { exitWithError, exitCodeFor, failWith } from '../utils/exit.js';
 import { formatPathForDisplay, getNetworkIp } from '../utils/dev-utils.js';
 import { createStaticHandler } from '../server/static.js';
+import { createMcpHandler } from '../mcp/handler.js';
+import { createMcpHttpHandler } from '../mcp/http.js';
 import { resolveServeBind, validateServeConfig } from '../server/serve-config.js';
 import { createActionHost } from '../server/action-host.js';
 import type { ActionHost } from '../server/action-host.js';
@@ -57,10 +59,12 @@ export function outputDirConflict(outputDir: string, cwd: string, srcDir: string
 export interface ServeRouterOptions {
   outputDir: () => string;
   version: string;
+  /** Serves `/mcp`; absent means MCP is off and `/mcp` is 404. */
+  mcp?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
 }
 
 /**
- * The request router: `/healthz`, `/mcp` (not served yet) and everything
+ * The request router: `/healthz`, `/mcp` (when enabled) and everything
  * else through the production static handler.
  */
 export function createServeRouter(opts: ServeRouterOptions) {
@@ -87,6 +91,10 @@ export function createServeRouter(opts: ServeRouterOptions) {
     }
 
     if (pathname === '/mcp') {
+      if (opts.mcp) {
+        await opts.mcp(req, res);
+        return;
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not Found');
       return;
@@ -149,7 +157,11 @@ export async function startServe(
   // 6. Bind first, so a port already in use fails fast and never touches a
   // live instance's output. Until the build finishes every request is 503.
   let ready = false;
-  const route = createServeRouter({ outputDir: () => outputDir, version: readVersion() });
+  const mcpEnabled = config.serve.mcp.enabled === true;
+  const mcp = mcpEnabled
+    ? createMcpHttpHandler({ handler: createMcpHandler({ cwd: CWD }), origins: config.serve.mcp.origins })
+    : undefined;
+  const route = createServeRouter({ outputDir: () => outputDir, version: readVersion(), mcp });
   const server = http.createServer((req, res) => {
     if (!ready) {
       res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '1' });
@@ -242,7 +254,7 @@ export async function startServe(
   if (networkIp) TUI.item('Network Access', `http://${networkIp}:${boundPort}`, TUI.bold, TUI.green);
   TUI.item('Serving from', formatPathForDisplay(outputDir, CWD), TUI.dim, TUI.green);
   TUI.item('Actions', actionsEnabled ? `on (origins: ${config.serve.actions.origins.join(', ')})` : 'off', TUI.dim, TUI.green);
-  TUI.item('MCP', 'off', TUI.dim, TUI.green);
+  TUI.item('MCP', mcpEnabled ? 'on' : 'off', TUI.dim, TUI.green);
   TUI.item('', '', TUI.dim, TUI.green);
   TUI.footer(TUI.green);
 
