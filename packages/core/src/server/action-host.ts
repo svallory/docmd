@@ -237,7 +237,7 @@ export async function createActionHost(opts: ActionHostOptions): Promise<ActionH
   try {
     if (opts.loadPlugins !== false) {
       try {
-        await loadPlugins(config, { resolvePaths: opts.resolvePaths ?? [], isDev: mode === 'dev' });
+        await loadPlugins(config, { resolvePaths: opts.resolvePaths ?? [], isDev: mode === 'dev', liveServer: mode === 'serve' });
       } catch (e) {
         await fail(e, 'Plugin loading failed');
       }

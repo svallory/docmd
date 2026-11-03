@@ -24,6 +24,9 @@ import { exitWithError, exitCodeFor, failWith } from '../utils/exit.js';
 import { formatPathForDisplay, getNetworkIp } from '../utils/dev-utils.js';
 import { createStaticHandler } from '../server/static.js';
 import { resolveServeBind, validateServeConfig } from '../server/serve-config.js';
+import { createActionHost } from '../server/action-host.js';
+import type { ActionHost } from '../server/action-host.js';
+import { createOriginAllowlist } from '../utils/ws-origin-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -163,10 +166,14 @@ export async function startServe(
     });
   });
 
-  // Actions are off: a WebSocket upgrade gets a definite answer.
-  server.on('upgrade', (_req, socket) => {
-    socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
-  });
+  // Actions off: a WebSocket upgrade gets a definite answer. Actions on: the
+  // action host owns the upgrade.
+  const actionsEnabled = config.serve.actions.enabled === true;
+  if (!actionsEnabled) {
+    server.on('upgrade', (_req, socket) => {
+      socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+    });
+  }
 
   // Listen on exactly host:port; no fallback.
   server.on('error', (err: any) => {
@@ -185,12 +192,34 @@ export async function startServe(
   const workerPool = new WorkerPool(workerScript, { config: workerConfig, cwd: CWD });
   try {
     if (await fs.exists(outputDir)) await fs.remove(outputDir);
-    await buildSite(configPathOption, { isDev: false, quiet: false, showStats: false, workerPool });
+    await buildSite(configPathOption, { isDev: false, quiet: false, showStats: false, workerPool, liveServer: actionsEnabled });
   } catch (e) {
     await workerPool.terminateAll().catch(() => {});
     exitWithError(e, { section: 'Build failed' });
   }
   TUI.info(`Build completed in ${elapsed()}.`);
+
+  // Attach the action host once the first build is on disk. A plugin whose
+  // `onServerReady` throws makes serve exit non-zero (D9).
+  let actionHost: ActionHost | null = null;
+  if (actionsEnabled) {
+    const rebuild = (files?: string[]) =>
+      buildSite(configPathOption, { isDev: false, quiet: true, workerPool, liveServer: true, targetFiles: files });
+    try {
+      actionHost = await createActionHost({
+        server,
+        mode: 'serve',
+        projectRoot: CWD,
+        config,
+        verifyClient: createOriginAllowlist(config.serve.actions.origins),
+        getWorkerPool: () => workerPool,
+        rebuild,
+      });
+    } catch (e) {
+      await workerPool.terminateAll().catch(() => {});
+      exitWithError(e, { section: 'Failed to start actions' });
+    }
+  }
   ready = true;
 
   // 8. Banner.
@@ -204,7 +233,7 @@ export async function startServe(
   TUI.item('Local Access', `http://${localHost}:${boundPort}`, TUI.bold, TUI.green);
   if (networkIp) TUI.item('Network Access', `http://${networkIp}:${boundPort}`, TUI.bold, TUI.green);
   TUI.item('Serving from', formatPathForDisplay(outputDir, CWD), TUI.dim, TUI.green);
-  TUI.item('Actions', 'off', TUI.dim, TUI.green);
+  TUI.item('Actions', actionsEnabled ? `on (origins: ${config.serve.actions.origins.join(', ')})` : 'off', TUI.dim, TUI.green);
   TUI.item('MCP', 'off', TUI.dim, TUI.green);
   TUI.item('', '', TUI.dim, TUI.green);
   TUI.footer(TUI.green);
@@ -220,6 +249,7 @@ export async function startServe(
       process.exit(exitCodeFor(new Error('shutdown timed out')));
     }, SHUTDOWN_BUDGET_MS).unref();
     try {
+      if (actionHost) await actionHost.close();
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
         server.closeIdleConnections?.();
