@@ -1,8 +1,8 @@
 import { whenLive } from './when-live';
 
 export interface PublishMountDeps<W> {
-  /** The docmd socket probe; absent when docmd is not loaded (static build). */
-  isLive: (() => boolean) | undefined;
+  /** The docmd socket probe (false on a static build, where the socket never opens). */
+  isLive: () => boolean;
   /** Whether the owning element is still in the document. */
   isConnected: () => boolean;
   create: () => W;
@@ -16,12 +16,12 @@ export function createPublishMount<W>(deps: PublishMountDeps<W>) {
 
   return {
     get widget(): W | null { return widget; },
+    /** Whether a wait for the socket is pending; read by tests only. */
     get waiting(): boolean { return cancel !== null; },
     start(): void {
-      const { isLive } = deps;
-      if (widget || cancel || !isLive) return;
+      if (widget || cancel) return;
       let fired = false;
-      const c = whenLive(isLive, () => {
+      const c = whenLive(deps.isLive, () => {
         fired = true;
         cancel = null;
         if (widget || !deps.isConnected()) return;
