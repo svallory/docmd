@@ -279,7 +279,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const { threadId } = payload;
     const { view } = await transact(ctx, caller, payload, (tx) => {
       const thread = findThread(tx.view, threadId);
-      assertCan(caller, 'resolve-thread', { threadAuthor: thread.comments[0]?.authorKey, drafted: thread.draft }, getOptions(ctx).permissions);
+      assertCan(caller, 'resolve-thread', { threadAuthor: thread.comments[0]?.parent_id ? null : thread.comments[0]?.authorKey, drafted: thread.draft }, getOptions(ctx).permissions);
       // A drafted thread has no resolved field to flip: a second toggle cancels the first.
       const pending = draftedThreadOp(tx, threadId)
         ? opsOnThread(tx, threadId).find((o) => o.kind === 'resolve-thread')
@@ -321,7 +321,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
   /** Take a review back: reverse a published one from its manifest, or empty the caller's open one. */
   'threads:discard-review': async (payload, ctx): Promise<{ discarded: true }> => {
     const caller = await begin(ctx, payload, 'threads:discard-review', ['reviewId']);
-    assertCan(caller, 'discard-review', { reviewAuthor: (await readManifest(ctx, payload.reviewId))?.authorKey ?? caller.key }, getOptions(ctx).permissions);
+    const manifest = await readManifest(ctx, payload.reviewId);
+    assertCan(caller, 'discard-review', { reviewAuthor: manifest ? (manifest.authorKey ?? null) : caller.key }, getOptions(ctx).permissions);
     return discard(caller, ctx, payload.reviewId, { store: getStore(ctx), sync: getSync(ctx) });
   },
 };

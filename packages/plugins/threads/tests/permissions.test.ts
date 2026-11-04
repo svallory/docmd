@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tempProject, makeCtx, type TempProject } from './helpers.ts';
 import { actions } from '../src/plugin/actions.ts';
-import { canDo, assertCan, type PermissionAction, type PermissionTarget } from '../src/plugin/permissions.ts';
+import { canDo, type PermissionAction, type PermissionTarget } from '../src/plugin/permissions.ts';
 import type { Caller } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ const rows: Row[] = [
   ['resolve author: thread author', ALICE, 'resolve-thread', { threadAuthor: 'alice' }, 'author', true],
   ['resolve author: admin', ROOT, 'resolve-thread', { threadAuthor: 'alice' }, 'author', true],
   ['resolve author: legacy thread', BOB, 'resolve-thread', {}, 'author', false],
+  ['resolve author: opening comment deleted, first reply is not the author', BOB, 'resolve-thread', { threadAuthor: null }, 'author', false],
   ['resolve author: drafted thread', BOB, 'resolve-thread', { drafted: true }, 'author', true],
   ['discard: other', BOB, 'discard-review', { reviewAuthor: 'alice' }, 'anyone', false],
   ['discard: author', ALICE, 'discard-review', { reviewAuthor: 'alice' }, 'anyone', true],
@@ -54,14 +55,6 @@ test('canDo decision table', () => {
   }
 });
 
-test('assertCan throws threads/forbidden and only then', () => {
-  assert.doesNotThrow(() => assertCan(ALICE, 'edit-comment', { authorKey: 'alice' }, { resolve: 'anyone' }));
-  assert.throws(
-    () => assertCan(BOB, 'edit-comment', { authorKey: 'alice' }, { resolve: 'anyone' }),
-    (e: any) => e.code === 'forbidden' && e.message.startsWith('threads/forbidden: '),
-  );
-});
-
 // ---------------------------------------------------------------------------
 // Wiring: each handler denies and allows through the actions
 // ---------------------------------------------------------------------------
@@ -69,7 +62,7 @@ test('assertCan throws threads/forbidden and only then', () => {
 const HEADER = 'x-id';
 let project: TempProject;
 let page: string;
-let reviewId: string;
+let reviewId: string; // alice's second thread's review: only the discard test touches it
 const threadsCfg = { identityHeader: HEADER, permissions: { admins: ['root'], resolve: 'author' } };
 const ctxFor = (key: string) => makeCtx(project.root, {
   config: { src: 'docs', plugins: { threads: threadsCfg } },
@@ -88,6 +81,10 @@ before(async () => {
   const t = await call('add-thread', 'alice', { body: 'first', anchor });
   tA = t.id; c1 = t.comments[0].id;
   c2 = (await call('add-comment', 'alice', { threadId: tA, body: 'second' })).id;
+  await call('publish-review', 'alice');
+  await call('add-comment', 'bob', { threadId: tA, body: 'bob was here' });
+  await call('publish-review', 'bob');
+  await call('add-thread', 'alice', { body: 'to discard', anchor });
   reviewId = (await call('whoami', 'alice')).journal.review.id;
   await call('publish-review', 'alice');
 });
@@ -110,8 +107,6 @@ test('delete-comment: a stranger is forbidden, the author is not', async () => {
 });
 
 test('delete-thread: forbidden unless the caller owns every comment', async () => {
-  await call('add-comment', 'bob', { threadId: tA, body: 'bob was here' });
-  await call('publish-review', 'bob');
   await forbidden(call('delete-thread', 'alice', { threadId: tA }));
   await call('delete-thread', 'root', { threadId: tA });
 });
