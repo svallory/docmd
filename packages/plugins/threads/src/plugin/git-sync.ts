@@ -208,7 +208,13 @@ export async function pullOnce(handle: ServerHandle, deps: PullDeps = {}): Promi
   });
   if (!queue.all && !queue.files.size) return;
   const sent = { all: queue.all, files: [...queue.files] };
-  await handle.rebuild(sent.all ? undefined : sent.files);
+  try {
+    await handle.rebuild(sent.all ? undefined : sent.files);
+  } catch (e) {
+    // A build failure, not a git one: say so, and leave the changes pending for the next tick.
+    console.error(`[threads] rebuild after pull failed: ${String((e as Error)?.message ?? e).split('\n').find((l) => l.trim()) ?? 'build failed'}`);
+    return;
+  }
   if (sent.all) queue.all = false;
   sent.files.forEach((f) => queue.files.delete(f));
 }
