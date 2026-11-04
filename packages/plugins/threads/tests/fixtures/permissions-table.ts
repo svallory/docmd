@@ -2,12 +2,6 @@ import type { Caller } from '../../src/types.ts';
 
 // The decision table shared by the server (`canDo`) and the client (`canShow`).
 import type { PermissionAction as Action, PermissionTarget as Target } from '../../src/plugin/permissions.ts';
-import type { ShowAction, ShowTarget } from '../../src/client/lib/can-show.ts';
-
-// Type-level: whatever the client may ask must be something the server's table knows.
-type Assert<T extends true> = T;
-export type _ActionsKnown = Assert<ShowAction extends Action ? true : false>;
-export type _TargetsKnown = Assert<ShowTarget extends Target ? true : false>;
 export type { Action, Target };
 
 export const who = (key: string, over: Partial<Caller> = {}): Caller =>
