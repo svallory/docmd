@@ -16,6 +16,8 @@ export interface Thread {
   anchor?: { quote: string };
   /** Set by the overlay: this thread exists only in the caller's draft journal. */
   draft?: true;
+  /** Set on read: the anchor quote has no `==...=={id}` mark in the page body any more. */
+  orphaned?: true;
 }
 
 export interface Comment {
@@ -124,6 +126,8 @@ export interface Caller {
 export interface WhoAmI {
   identity: Caller | null;
   journal: Journal | null;
+  /** Published threads started by the caller whose anchor text is gone from the page. */
+  orphanedMine: number;
 }
 
 /** An applied op as the manifest records it; `before` is what discard needs to reverse it. */
