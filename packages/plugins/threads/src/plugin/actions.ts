@@ -203,7 +203,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     return {
       identity,
       journal: await getStore(ctx).load(identity.key),
-      orphanedMine: await countOrphanedBy(docsRoot, identity.key, fsOrphanScanDeps),
+      // A secondary counter: an unreadable file or directory must not cost the caller identity and journal.
+      orphanedMine: await countOrphanedBy(docsRoot, identity.key, fsOrphanScanDeps).catch(() => 0),
     };
   },
 

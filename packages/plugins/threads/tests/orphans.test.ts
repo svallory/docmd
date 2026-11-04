@@ -55,6 +55,7 @@ const FILES: Record<string, string> = {
   '/docs/bob.md': orphan('t-a2', 'k-bob'),
   '/docs/sub/b.md': orphan('t-b', 'k-alice'),
   '/docs/.threads/x.md': orphan('t-x', 'k-alice'),
+  '/docs/.git/x.md': orphan('t-g', 'k-alice'),
   '/docs/node_modules/pkg/y.md': orphan('t-y', 'k-alice'),
   '/docs/plain.md': 'No threads here.\n',
   '/docs/marked.md': 'Has ==gone text=={t-m} still.\n' + orphan('t-m', 'k-alice').replace('Plain.\n', ''),
@@ -64,7 +65,7 @@ const deps = {
   listMarkdown: async () => Object.keys(FILES),
 };
 
-test('countOrphanedBy counts across files by first-comment key and skips .threads and node_modules', async () => {
+test('countOrphanedBy counts across files by first-comment key and skips .threads, .git and node_modules', async () => {
   assert.equal(await countOrphanedBy(ROOT, 'k-alice', deps), 2);
   assert.equal(await countOrphanedBy(ROOT, 'k-bob', deps), 1);
 });
@@ -139,4 +140,23 @@ test('whoami counts the starter\'s orphan, not another caller\'s, and not a draf
   await call('threads:add-thread', { file, ...ALICE, body: 'Still a draft', anchor: ANCHOR('Component Verification') });
   assert.equal((await call('threads:whoami', ALICE)).orphanedMine, 1);
   assert.equal((await call('threads:whoami', BOB)).orphanedMine, 0);
+});
+
+test('whoami still returns identity and journal when the orphan scan cannot read a directory', async () => {
+  const unreadable = path.join(project.root, 'docs', 'locked');
+  fs.mkdirSync(unreadable, { recursive: true });
+  const real = fs.promises.readdir;
+  fs.promises.readdir = (async (dir: any, ...rest: any[]) => {
+    if (String(dir) === unreadable) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return (real as any)(dir, ...rest);
+  }) as any;
+  try {
+    const me = await call('threads:whoami', ALICE);
+    assert.equal(me.identity.key, 'k-alice');
+    assert.equal(me.journal.authorKey, 'k-alice');
+    assert.equal(me.orphanedMine, 0);
+  } finally {
+    fs.promises.readdir = real;
+    fs.rmSync(unreadable, { recursive: true, force: true });
+  }
 });

@@ -4,7 +4,7 @@ import * as parser from './parser.js';
 import { markPattern, splitPage } from './marks.js';
 import type { Thread } from '../types.js';
 
-const SKIPPED_DIRS = new Set(['.threads', 'node_modules']);
+const SKIPPED_DIRS = new Set(['.threads', 'node_modules', '.git']);
 const BATCH = 32;
 
 /**
@@ -53,8 +53,8 @@ export const fsOrphanScanDeps: OrphanScanDeps = {
 
 /**
  * Orphaned published threads, under `docsRoot`, whose first comment was written by
- * `authorKey`. Files without a threads block are not parsed; `.threads/` and
- * `node_modules` are skipped whatever `listMarkdown` returns.
+ * `authorKey`. Files without a threads block are not parsed; `.threads/`,
+ * `node_modules` and `.git` are skipped whatever `listMarkdown` returns.
  */
 export async function countOrphanedBy(docsRoot: string, authorKey: string, deps: OrphanScanDeps): Promise<number> {
   const files = (await deps.listMarkdown(docsRoot)).filter(
