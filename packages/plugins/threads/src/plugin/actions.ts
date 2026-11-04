@@ -247,8 +247,16 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const caller = await begin(ctx, payload, 'threads:delete-comment', ['file', 'threadId', 'commentId']);
     const { threadId, commentId } = payload;
     await transact(ctx, caller, payload, (tx) => {
-      const target = findComment(findThread(tx.view, threadId), commentId);
-      assertCan(caller, 'delete-comment', { authorKey: target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
+      const thread = findThread(tx.view, threadId);
+      const target = findComment(thread, commentId);
+      // The opening comment of a thread that has replies: admin only, and the whole thread goes (nothing records an opener once it is spliced out).
+      const wholeThread = !target.draft && thread.comments.length > 1 && thread.comments[0].id === commentId;
+      assertCan(caller, 'delete-comment', { authorKey: wholeThread ? null : target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
+      if (wholeThread) {
+        drop(tx, opsOnThread(tx, threadId));
+        push(tx, { kind: 'delete-thread', file: tx.file, threadId });
+        return;
+      }
       const drafted = draftedCommentOp(tx, commentId);
       if (drafted?.kind === 'add-thread') {
         // The first comment of a drafted thread: the thread goes with it.
@@ -279,7 +287,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const { threadId } = payload;
     const { view } = await transact(ctx, caller, payload, (tx) => {
       const thread = findThread(tx.view, threadId);
-      assertCan(caller, 'resolve-thread', { threadAuthor: thread.comments[0]?.parent_id ? null : thread.comments[0]?.authorKey, drafted: thread.draft }, getOptions(ctx).permissions);
+      assertCan(caller, 'resolve-thread', { threadAuthor: thread.comments[0]?.authorKey, drafted: thread.draft }, getOptions(ctx).permissions);
       // A drafted thread has no resolved field to flip: a second toggle cancels the first.
       const pending = draftedThreadOp(tx, threadId)
         ? opsOnThread(tx, threadId).find((o) => o.kind === 'resolve-thread')
