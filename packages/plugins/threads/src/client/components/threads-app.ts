@@ -2,7 +2,7 @@ import { LitElement, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import type { Thread, Comment, Anchor, AuthorsMap } from '../../types';
 import * as api from '../lib/api';
-import { initIdentity, getIdentityPayload } from '../lib/identity';
+import { initIdentity, getIdentityPayload, canShowFor } from '../lib/identity';
 import { computeAnchor, getSelectionPosition, isWithinContent } from '../lib/selection';
 import { initThemeBridge } from '../lib/theme';
 import { t } from '../lib/i18n';
@@ -57,8 +57,6 @@ export class ThreadsApp extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     initThemeBridge();
-    initIdentity();
-    this.injectIdentityButton();
     document.addEventListener('mouseup', this.handleMouseUp);
     document.addEventListener('mousedown', this.handleOutsidePopoverClick);
     document.addEventListener('docmd:page-mounted', this.handlePageMounted as EventListener);
@@ -67,10 +65,15 @@ export class ThreadsApp extends LitElement {
     // Always initialize sidebar column so the panel is available for FAB toggle
     this.initSidebarColumn();
 
-    this.loadThreads();
-    this.injectNewThreadButton();
-    this.injectFab();
-    this.mountPublishWidget();
+    // Who the caller is decides which buttons render and whether a name is ever asked: learn it first.
+    void initIdentity().then(() => {
+      if (!this.isConnected) return;
+      this.injectIdentityButton();
+      this.loadThreads();
+      this.injectNewThreadButton();
+      this.injectFab();
+      this.mountPublishWidget();
+    });
 
     // Register afterReload handler for post-mutation continuity
     if (typeof docmd !== 'undefined' && docmd.afterReload) {
@@ -501,7 +504,13 @@ export class ThreadsApp extends LitElement {
         });
         actions.appendChild(replyBtn);
 
-        // Delete button
+        // Delete button: only when the server would accept it (a lone comment deletes the thread)
+        const thread = this.threads.find(th => th.id === threadId);
+        const comment = thread?.comments.find(c => c.id === commentId);
+        const deletable = totalComments === 1
+          ? canShowFor('delete-thread', { authorKeys: (thread?.comments ?? []).filter(c => !c.draft).map(c => c.authorKey) })
+          : canShowFor('delete-comment', { authorKey: comment?.authorKey, drafted: !!comment?.draft });
+        if (deletable) {
         const delBtn = document.createElement('button');
         delBtn.className = 'threads-delete-btn';
         delBtn.appendChild(createSvgElement('trash', 13));
@@ -517,6 +526,7 @@ export class ThreadsApp extends LitElement {
           if (dialog) dialog.open = true;
         });
         actions.appendChild(delBtn);
+        }
 
         meta.appendChild(actions);
       }
@@ -1012,7 +1022,7 @@ export class ThreadsApp extends LitElement {
         console.error('[threads] Failed to toggle resolve:', err);
       }
     });
-    footer.appendChild(resolveBtn);
+    if (canShowFor('resolve-thread', { threadAuthor: thread.comments[0]?.authorKey, drafted: !!thread.draft })) footer.appendChild(resolveBtn);
 
     // Collapse toggle button
     const toggleBtn = document.createElement('button');
@@ -1095,6 +1105,7 @@ export class ThreadsApp extends LitElement {
     actions.appendChild(replyBtn);
 
     // Delete button
+    if (canShowFor('delete-comment', { authorKey: comment.authorKey, drafted: !!comment.draft })) {
     const delBtn = document.createElement('button');
     delBtn.className = 'threads-delete-btn';
     delBtn.appendChild(createSvgElement('trash', 13));
@@ -1106,6 +1117,7 @@ export class ThreadsApp extends LitElement {
       if (dialog) dialog.open = true;
     });
     actions.appendChild(delBtn);
+    }
 
     meta.appendChild(actions);
     commentEl.appendChild(meta);

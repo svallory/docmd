@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { getThreadSvg } from '../lib/icons';
 import { t } from '../lib/i18n';
 import type { Comment } from '../../types';
+import { canShowFor, isHeaderMode } from '../lib/identity';
 
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/textarea/textarea.js';
@@ -23,8 +24,10 @@ export class ThreadsComment extends LitElement {
 
   private editValue = '';
 
-  private get isOwn(): boolean {
-    return this.comment.author === this.currentAuthor;
+  /** Header mode asks the permission table; local mode keeps the display-name match. */
+  private can(action: 'edit-comment' | 'delete-comment'): boolean {
+    if (!isHeaderMode()) return this.comment.author === this.currentAuthor;
+    return canShowFor(action, { authorKey: this.comment.authorKey, drafted: !!this.comment.draft });
   }
 
   override connectedCallback() {
@@ -158,14 +161,14 @@ export class ThreadsComment extends LitElement {
             <span class="tc-comment__time">${this.formatTime(c.date)}${c.edited_at ? ' (edited)' : ''}</span>
           ${c.draft ? html`<span class="tc-comment__draft" data-testid="tc-draft-badge">${t('draft')}</span>` : nothing}
           </div>
-          ${this.isOwn && !this.editing ? html`
+          ${!this.editing && (this.can('edit-comment') || this.can('delete-comment')) ? html`
             <div class="tc-comment__menu">
-              <sl-button size="small" variant="text" title="Edit" @click=${this.startEdit}>
+              ${this.can('edit-comment') ? html`<sl-button size="small" variant="text" title="Edit" @click=${this.startEdit}>
                 <span style="display:inline-flex;align-items:center;">${unsafeHTML(getThreadSvg('pencil', 13))}</span>
-              </sl-button>
-              <sl-button size="small" variant="text" title="Delete" @click=${this.requestDelete}>
+              </sl-button>` : nothing}
+              ${this.can('delete-comment') ? html`<sl-button size="small" variant="text" title="Delete" @click=${this.requestDelete}>
                 <span style="display:inline-flex;align-items:center;">${unsafeHTML(getThreadSvg('trash', 13))}</span>
-              </sl-button>
+              </sl-button>` : nothing}
             </div>
           ` : nothing}
         </div>

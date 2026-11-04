@@ -1,3 +1,18 @@
+import type { WhoAmI } from '../../types';
+import { canShow, type ShowAction, type ShowTarget } from './can-show';
+import { whoami } from './api';
+
+export type IdentityMode =
+  | { mode: 'header'; payload: { author: string; authorKey: string; avatarUrl: string }; isAdmin: boolean }
+  | { mode: 'local' };
+
+/** Pure: a trusted header identity from the server, or the local (dev) path. */
+export function identityFromWhoami(w: Pick<WhoAmI, 'identity'> | null | undefined): IdentityMode {
+  const id = w?.identity;
+  if (!id || id.source !== 'header') return { mode: 'local' };
+  return { mode: 'header', payload: { author: id.name, authorKey: id.key, avatarUrl: id.avatarUrl }, isAdmin: id.isAdmin };
+}
+
 const STORAGE_KEY_NAME = 'threads_author';
 const STORAGE_KEY_EMAIL = 'threads_email';
 const STORAGE_KEY_GITHUB = 'threads_github';
@@ -111,11 +126,47 @@ async function getGravatarUrl(email: string): Promise<string | null> {
   }
 }
 
+let identity: IdentityMode = { mode: 'local' };
+
+export function getIdentityMode(): IdentityMode {
+  return identity;
+}
+
+export function isHeaderMode(): boolean {
+  return identity.mode === 'header';
+}
+
+/** The caller's key in header mode, else the stored local key. */
+export function getCallerKey(): string | null {
+  return identity.mode === 'header' ? identity.payload.authorKey : getAuthorKey();
+}
+
+/** Whether to render a button the server may refuse; local mode always shows. */
+export function canShowFor(action: ShowAction, target: ShowTarget): boolean {
+  const resolve = (window as any).__threads_config?.permissions?.resolve === 'author' ? 'author' : 'anyone';
+  return canShow(action, {
+    callerKey: getCallerKey(),
+    isAdmin: identity.mode === 'header' && identity.isAdmin,
+    source: identity.mode === 'header' ? 'header' : 'payload',
+    resolveRule: resolve,
+  }, target);
+}
+
 /**
- * On first load, seed identity from git config if available
- * and nothing is stored yet.
+ * On first load ask `whoami`: a header identity wins and is never prompted for;
+ * otherwise (or when no live server answers) seed from git config as before.
  */
-export function initIdentity(): void {
+export async function initIdentity(): Promise<void> {
+  try {
+    // A non-prompting payload: local mode must not open a prompt just to ask who we are.
+    const author = getAuthor() || '';
+    const authorKey = getAuthorKey() || author;
+    identity = identityFromWhoami(await whoami({ author, authorKey, avatarUrl: getAvatarUrl() || '' }));
+  } catch {
+    identity = { mode: 'local' };
+  }
+  if (identity.mode === 'header') return;
+
   const devInfo = window.__docmd_dev;
   if (!devInfo) return;
 
@@ -131,6 +182,7 @@ export function initIdentity(): void {
 }
 
 export function ensureAuthor(): string {
+  if (identity.mode === 'header') return identity.payload.author;
   let author = getAuthor();
   if (!author) {
     author = prompt('Enter your display name for discussions:');
@@ -153,6 +205,7 @@ export function ensureAuthor(): string {
  * Get the full identity info needed for creating comments.
  */
 export function getIdentityPayload(): { author: string; authorKey: string; avatarUrl: string } {
+  if (identity.mode === 'header') return { ...identity.payload };
   const author = ensureAuthor();
   const authorKey = getAuthorKey() || computeAuthorKey(author, getGithub() || '');
   const avatarUrl = getAvatarUrl() || '';

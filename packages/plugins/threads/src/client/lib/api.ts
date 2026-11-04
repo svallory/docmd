@@ -27,8 +27,9 @@ export async function fetchAuthors(): Promise<AuthorsMap> {
   }
 }
 
-export async function upsertAuthor(authorKey: string, name: string, avatarUrl: string): Promise<void> {
-  await docmd.call('threads:upsert-author', { authorKey, name, avatarUrl });
+export async function upsertAuthor(authorKey: string | null, name: string, avatarUrl: string): Promise<void> {
+  // A header identity names itself; the server rejects a client-sent key.
+  await docmd.call('threads:upsert-author', authorKey === null ? { name, avatarUrl } : { authorKey, name, avatarUrl });
 }
 
 export async function fetchThreads(): Promise<Thread[]> {
@@ -140,8 +141,8 @@ async function call<T>(action: string, payload: any): Promise<T> {
   }
 }
 
-export function whoami(): Promise<WhoAmI> {
-  return call('threads:whoami', getIdentityPayload());
+export function whoami(identity?: { author: string; authorKey: string; avatarUrl: string }): Promise<WhoAmI> {
+  return call('threads:whoami', identity ?? getIdentityPayload());
 }
 
 export function setMode(mode: DraftMode): Promise<Journal> {
