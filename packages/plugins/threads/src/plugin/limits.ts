@@ -44,7 +44,10 @@ const limiters = new Map<string, { max: number; limiter: RateLimiter }>();
 /**
  * The first checks of a write handler, after the caller is resolved and
  * before anything is read or written: body length, then (if `rate`) the
- * caller's rate. A too-long body does not consume the caller's rate.
+ * caller's rate. A too-long body does not consume the caller's rate; a call
+ * the handler rejects later (e.g. an unknown thread) still counts toward it.
+ * `now` is read only when the project's limiter is created, so pass a
+ * late-bound clock (`() => Date.now()`), not a captured value.
  */
 export function guardWrite(
   ctx: ActionContext,
