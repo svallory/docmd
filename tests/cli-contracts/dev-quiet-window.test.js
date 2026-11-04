@@ -43,6 +43,7 @@ function harness({ failBuilds = 0 } = {}) {
   const builds = [];
   const built = [];
   const configs = [];
+  const marked = new Set();
   let toFail = failBuilds;
   const pipe = createWatchPipeline({
     quietMs: QUIET,
@@ -51,7 +52,8 @@ function harness({ failBuilds = 0 } = {}) {
     setTimer: (fn, ms) => { const id = nextId++; timers.set(id, { at: clock + ms, fn }); return id; },
     clearTimer: (id) => { timers.delete(id); },
     signatureChanged: (f) => tracker.hasChanged(f),
-    isBlocked: () => false,
+    resetSignature: (f) => tracker.forget(f),
+    isRpcWritten: (f) => marked.has(f),
     build: async (targets) => {
       builds.push(targets);
       if (toFail > 0) { toFail--; throw new Error('boom'); }
@@ -73,7 +75,7 @@ function harness({ failBuilds = 0 } = {}) {
     await settle();
   };
   const content = (f, rpcWritten = false) => pipe.event(f, { kind: 'content', rpcWritten });
-  return { pipe, advance, content, builds, built, configs, timers };
+  return { pipe, advance, content, builds, built, configs, timers, marked, tracker };
 }
 
 let seq = 0;
@@ -138,7 +140,10 @@ export const test = runTestFile({
       save(b);
       h.content(b);
       await h.advance(DEBOUNCE);
-      assert(h.builds.length === 2 && same(h.builds[1], [a, b]), 'a failed build\'s files are rebuilt with the next edit');
+      assert(h.builds.length === 2 && same(h.builds[1], [b]), 'a broken page is not dragged into the next, unrelated build');
+      h.content(a); // no new save: only the reset signature lets this event through
+      await h.advance(QUIET + DEBOUNCE);
+      assert(h.builds.length === 3 && same(h.builds[2], [a]), 'the failed file is rebuilt on its own next event');
     }
 
     { // cancel
@@ -166,15 +171,47 @@ export const test = runTestFile({
       const a = path.join(dir, 'ra.md');
       const b = path.join(dir, 'rb.md');
       save(a); save(b);
+      await h.advance(QUIET);
       h.content(a, true);
       await h.advance(QUIET + DEBOUNCE);
       assert(h.built[1].reload === false, 'a build of RPC-written files does not request a reload');
-      await h.advance(QUIET);
-      h.content(a, true); h.content(b, false);
+
       save(a); save(b);
       h.content(a, true); h.content(b, false);
-      await h.advance(DEBOUNCE);
+      await h.advance(QUIET + DEBOUNCE);
       assert(h.built[2].reload === true, 'a build with any non-RPC file requests a reload');
+
+      save(a);
+      h.content(a, false); // the write's event arrives before the mark is set
+      h.marked.add(a);     // ... and the mark lands before the debounce fires
+      await h.advance(QUIET + DEBOUNCE);
+      assert(h.built[3].reload === false, 'an RPC mark set after the event but before the build still suppresses the reload');
+      h.marked.clear();
+
+      save(a);
+      h.content(a, true);
+      save(a);
+      h.content(a, false); // user edit right after an RPC write (a second save, so it passes the gate)
+      await h.advance(QUIET + DEBOUNCE);
+      assert(h.built[4].reload === false, 'marks for one file combine so that any marked event keeps it marked');
+
+      h.pipe.markRebuilt(); // open the window: both events are deferred
+      save(a);
+      h.content(a, true);
+      save(a);
+      h.content(a, false);
+      await h.advance(QUIET + DEBOUNCE);
+      assert(h.built[5].reload === false, 'deferred events for one file combine the same way');
+    }
+
+    { // assets
+      const { h } = await builtOnce(dir);
+      const asset = path.join(dir, 'logo.png');
+      save(asset);
+      await h.advance(QUIET);
+      h.pipe.event(asset, { kind: 'asset', rpcWritten: false });
+      await h.advance(DEBOUNCE);
+      assert(h.builds.length === 2 && h.builds[1] === undefined, 'an asset change triggers a full build (no targets)');
     }
 
     { // config
