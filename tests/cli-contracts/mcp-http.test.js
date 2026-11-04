@@ -151,7 +151,7 @@ export const test = runTestFile({
           'serve: POST /mcp initialize with a configured Origin is 200 with serverInfo.name');
         const g = await request(port, '/mcp', 'GET');
         assert(g.status === 405, 'serve: GET /mcp is 405');
-        assert(/MCP\s*:?\s*on/.test(handle.output.text.replace(/\x1b\[[0-9;]*m/g, '')), 'serve: banner shows MCP on');
+        assert(/MCP\s*:?\s*on/.test(handle.output.text.replace(new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g'), '')), 'serve: banner shows MCP on');
       } finally {
         await stopServe(handle);
       }
