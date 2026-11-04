@@ -16,7 +16,7 @@ import { DOCS_DIR, PAGES } from "./playground.ts";
  *
  * Workaround for a core dev-server bug: its watcher drops genuine file edits made within 1 s of a rebuild
  * finishing (CONTENT_QUIET_MS in the dev command), so a restore can be missed and is rewritten until served.
- * Remove the retry loop when core stops dropping edits (tracker id: TBD, see the unit result).
+ * Remove the retry loop when core stops dropping edits (docmd-53b).
  * At most 3 attempts x 4 s per page keeps the worst case (24 s) under the 30 s hook timeout.
  */
 export async function cleanThreads(page: Page): Promise<void> {
@@ -58,7 +58,7 @@ const servedHtml = (page: Page): Promise<string> =>
  * served page differs from before the publish: a reload right after would otherwise race the rebuild.
  * Workaround for the same core dev-server bug as cleanThreads (it drops edits within 1 s of a rebuild): if the
  * publish landed in that window the page is rebuilt by appending a newline to its source (the next cleanThreads
- * restores it). Remove the fallback with the core fix (tracker id: TBD, see the unit result).
+ * restores it). Remove the fallback with the core fix (docmd-53b).
  */
 export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
   const before = await servedHtml(page);
