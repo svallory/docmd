@@ -113,7 +113,7 @@ test('AC-2: the payload identity is ignored; the header names the author, author
 
 test('AC-7: a header profile edit is journaled, then written to authors.json at publish', async () => {
   const ctx = headerCtx({ 'x-auth-request-email': 'bob@example.com' });
-  await run('upsert-author', { name: 'Bob B', avatarUrl: 'http://a/b.png', authorKey: 'mallory' }, ctx);
+  await run('upsert-author', { name: 'Bob B', avatarUrl: 'http://a/b.png' }, ctx);
   assert.equal(fs.existsSync(authorsFile()), false);
   assert.deepEqual((await run('whoami', {}, ctx)).journal.profile, { name: 'Bob B', avatarUrl: 'http://a/b.png' });
   await run('add-thread', { file: project.file, body: 'hi', anchor }, ctx);
