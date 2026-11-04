@@ -1,12 +1,15 @@
 /**
- * Reviews tab journey: publish → Reviews tab lists it → quote link scrolls to the thread →
+ * Reviews tab journey: draft → title form saves → publish → Reviews tab lists it → quote link scrolls to the thread →
  * Discard cancel (no change) → Discard confirm (entry greyed, no Discard button).
  */
 
 import { test, expect } from "@playwright/test";
-import { cleanThreads, publishReview, setAuthor, snapshotPlaygroundPage } from "./helpers.ts";
+import { cleanThreads, publishReview, setAuthor, snapshotPlaygroundPage, snapshotReviews } from "./helpers.ts";
+
+let restoreReviews: () => void;
 
 test.beforeEach(async ({ page }) => {
+  restoreReviews = snapshotReviews();
   await page.goto("/");
   await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
   await setAuthor(page, "TestUser");
@@ -17,12 +20,13 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => {
   await cleanThreads(page);
+  restoreReviews();
 });
 
 const firstWords = () =>
   (document.querySelector("main p, .content p, article p") as HTMLElement).textContent!.trim().split(" ").slice(0, 3).join(" ");
 
-async function seedAndPublish(page: import("@playwright/test").Page, quote: string, body: string): Promise<string> {
+async function seedDraft(page: import("@playwright/test").Page, quote: string, body: string): Promise<void> {
   await page.evaluate(
     ({ quote, body }) =>
       docmd.call("threads:add-thread", {
@@ -34,6 +38,10 @@ async function seedAndPublish(page: import("@playwright/test").Page, quote: stri
       }),
     { quote, body },
   );
+}
+
+async function seedAndPublish(page: import("@playwright/test").Page, quote: string, body: string): Promise<string> {
+  await seedDraft(page, quote, body);
   return (await publishReview(page)).reviewId;
 }
 
@@ -43,9 +51,19 @@ async function openReviews(page: import("@playwright/test").Page): Promise<void>
   await page.getByTestId("tab-reviews").click();
 }
 
-test("a published review is listed, its quote links to the thread (same page and across pages), and Discard asks first", async ({ page }) => {
+test("title form, published review list, quote link (same page), and Discard asks first", async ({ page }) => {
   const quote = await page.evaluate(firstWords);
-  const reviewId = await seedAndPublish(page, quote, "reviews journey");
+  await seedDraft(page, quote, "reviews journey");
+  await page.reload();
+  await openReviews(page);
+
+  // The open review (a journal exists once a draft does): title form saves before the publish.
+  await page.getByTestId("review-title").fill("My review");
+  await page.getByTestId("review-save").click();
+  await expect
+    .poll(() => page.evaluate(async () => (await docmd.call("threads:whoami", { author: "TestUser", authorKey: "TestUser" })).journal.review.title))
+    .toBe("My review");
+  const reviewId = (await publishReview(page)).reviewId;
   await page.reload();
   await openReviews(page);
 
@@ -109,24 +127,4 @@ test("a deep link to an unknown thread neither scrolls nor flashes, after a full
   await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
   await expect(page.locator(".threads-thread--flash")).toHaveCount(0);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
-});
-
-test("the open review's title form saves", async ({ page }) => {
-  // whoami has a journal only once a draft exists.
-  await page.evaluate(() =>
-    docmd.call("threads:add-thread", {
-      file: document.body.dataset["sourceFile"],
-      anchor: null,
-      author: "TestUser",
-      authorKey: "TestUser",
-      body: "title form",
-    }),
-  );
-  await page.reload();
-  await openReviews(page);
-  await page.getByTestId("review-title").fill("My review");
-  await page.getByTestId("review-save").click();
-  await expect
-    .poll(() => page.evaluate(async () => (await docmd.call("threads:whoami", { author: "TestUser", authorKey: "TestUser" })).journal.review.title))
-    .toBe("My review");
 });
