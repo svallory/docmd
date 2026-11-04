@@ -4,5 +4,6 @@
  */
 
 declare const docmd: {
+  isLive?: () => boolean;
   call: (action: string, payload: Record<string, unknown>) => Promise<any>;
 };
