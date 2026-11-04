@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { t } from '../lib/i18n';
 import * as api from '../lib/api';
+import { canShowFor } from '../lib/identity';
 import { siteFromPage, sortReviews, threadHref } from '../lib/reviews-view';
 import type { Journal, ReviewSummary } from '../../types';
 
@@ -128,7 +129,7 @@ export class ThreadsReviewsPanel extends LitElement {
               href=${threadHref(op.file, op.threadId, site.siteBase, site.srcRoot)}
               @click=${(e: Event) => this.onOpClick(e)}>${op.quote ?? op.pageTitle ?? op.file}</a></li>`)}
         </ul>
-        ${discarded ? nothing : html`
+        ${discarded || !canShowFor('discard-review', { reviewAuthor: r.authorKey }) ? nothing : html`
           <sl-button size="small" variant="text" data-testid="review-discard" @click=${() => this.askDiscard(r.id)}>${t('discard')}</sl-button>`}
       </div>`;
   }

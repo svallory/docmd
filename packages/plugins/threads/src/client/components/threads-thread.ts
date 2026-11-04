@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type { Thread } from '../../types';
+import { canShowFor } from '../lib/identity';
 
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
@@ -80,10 +81,12 @@ export class ThreadsThread extends LitElement {
         </div>
 
         <div class="tc-thread__footer">
-          <sl-button size="small" variant="text" style=${t.resolved ? '' : 'color: var(--sl-color-success-600);'} @click=${this.toggleResolve}>
-            ${t.resolved ? 'Unresolve' : 'Resolve'}
-          </sl-button>
-          <sl-button size="small" variant="text" style="color: var(--sl-color-danger-600);" @click=${this.requestDelete}>Delete</sl-button>
+          ${canShowFor('resolve-thread', { threadAuthor: t.comments[0]?.authorKey, drafted: !!t.draft }) ? html`
+            <sl-button size="small" variant="text" style=${t.resolved ? '' : 'color: var(--sl-color-success-600);'} @click=${this.toggleResolve}>
+              ${t.resolved ? 'Unresolve' : 'Resolve'}
+            </sl-button>` : nothing}
+          ${canShowFor('delete-thread', { authorKeys: t.comments.filter(c => !c.draft).map(c => c.authorKey), drafted: !!t.draft }) ? html`
+            <sl-button size="small" variant="text" style="color: var(--sl-color-danger-600);" @click=${this.requestDelete}>Delete</sl-button>` : nothing}
         </div>
       </div>
     `;

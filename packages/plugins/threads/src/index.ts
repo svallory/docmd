@@ -62,8 +62,8 @@ export function generateScripts(config: any, options?: any): { headScriptsHtml: 
   }
 
   const normalized = normalizeOptions(options);
-  // Only what the client reads: never identityHeader, permissions or git.
-  const clientConfig = { sidebar: normalized.sidebar, autoPublish: normalized.autoPublish };
+  // Only what the client reads: never identityHeader, permissions.admins or git.
+  const clientConfig = { sidebar: normalized.sidebar, autoPublish: normalized.autoPublish, permissions: { resolve: normalized.permissions.resolve } };
   const i18nStrings = loadPluginStrings(config._activeLocale?.id || 'en');
 
   return {

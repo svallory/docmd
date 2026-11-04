@@ -1,4 +1,4 @@
-import { LitElement, html } from 'lit';
+import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { t } from '../lib/i18n';
 import {
@@ -8,6 +8,7 @@ import {
   getAvatarUrl, setAvatarUrl,
   computeAvatarUrl,
   computeAuthorKey, setAuthorKey,
+  getIdentityMode,
 } from '../lib/identity';
 import { upsertAuthor } from '../lib/api';
 
@@ -29,14 +30,20 @@ export class ThreadsIdentity extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this.name = getAuthor() || '';
-    this.email = getEmail() || '';
-    this.github = getGithub() || '';
-    this.avatarUrl = getAvatarUrl() || '';
+    const me = getIdentityMode();
+    if (me.mode === 'header') {
+      this.name = me.payload.author;
+      this.avatarUrl = me.payload.avatarUrl;
+    } else {
+      this.name = getAuthor() || '';
+      this.email = getEmail() || '';
+      this.github = getGithub() || '';
+      this.avatarUrl = getAvatarUrl() || '';
 
-    // If we have identity info but no avatar yet, compute one
-    if (!this.avatarUrl && (this.email || this.github)) {
-      this.refreshAvatar();
+      // If we have identity info but no avatar yet, compute one
+      if (!this.avatarUrl && (this.email || this.github)) {
+        this.refreshAvatar();
+      }
     }
 
     document.addEventListener('mousedown', this.outsideClickHandler);
@@ -52,7 +59,22 @@ export class ThreadsIdentity extends LitElement {
   }
 
   private async handleSave(): Promise<void> {
+    const me = getIdentityMode();
     const nameInput = this.querySelector<HTMLInputElement>('#identity-name');
+
+    // A header identity owns its key: the name and avatar edit the profile only.
+    if (me.mode === 'header') {
+      const val = nameInput?.value.trim();
+      if (val) this.name = val;
+      try {
+        await upsertAuthor(null, this.name, this.avatarUrl);
+      } catch {
+        // Surface nothing: the server stays the authority on the profile
+      }
+      this.panelOpen = false;
+      return;
+    }
+
     const emailInput = this.querySelector<HTMLInputElement>('#identity-email');
     const githubInput = this.querySelector<HTMLInputElement>('#identity-github');
 
@@ -101,6 +123,7 @@ export class ThreadsIdentity extends LitElement {
   }
 
   override render() {
+    const header = getIdentityMode().mode === 'header';
     const initial = this.name ? this.name.charAt(0).toUpperCase() : '?';
 
     return html`
@@ -133,6 +156,7 @@ export class ThreadsIdentity extends LitElement {
               placeholder=${t('yourName')}
             />
           </label>
+          ${header ? nothing : html`
           <label class="threads-identity-label">
             ${t('githubUsername')}
             <input
@@ -143,6 +167,8 @@ export class ThreadsIdentity extends LitElement {
               placeholder="octocat"
             />
           </label>
+          `}
+          ${header ? nothing : html`
           <label class="threads-identity-label">
             ${t('gravatarEmail')}
             <input
@@ -153,9 +179,8 @@ export class ThreadsIdentity extends LitElement {
               placeholder="you@example.com"
             />
           </label>
-          <p class="threads-identity-hint">
-            ${t('avatarHint')}
-          </p>
+          `}
+          ${header ? nothing : html`<p class="threads-identity-hint">${t('avatarHint')}</p>`}
           <div class="threads-identity-actions">
             <button class="threads-identity-cancel" @click=${this.handleCancel}>${t('cancel')}</button>
             <button class="threads-identity-save" @click=${this.handleSave}>${t('save')}</button>
