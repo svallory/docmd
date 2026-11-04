@@ -9,7 +9,7 @@ import { createDraftStore, makeOp, type DraftStore } from './drafts.js';
 import { guardWrite } from './limits.js';
 import { overlay } from './overlay.js';
 import { findCaller, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
-import { defaultSync, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
+import { defaultSync, discard, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
 import type { Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
 
 interface AuthorsMap {
@@ -321,4 +321,10 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     getStore(ctx).setReview(resolveCaller(ctx, payload).key, parseReviewFields('threads:update-review', payload)),
 
   'threads:list-reviews': async (_payload, ctx): Promise<ReviewSummary[]> => (await listManifests(ctx)).map(summarize),
+
+  /** Take a review back: reverse a published one from its manifest, or empty the caller's open one. */
+  'threads:discard-review': async (payload, ctx): Promise<{ discarded: true }> => {
+    if (typeof payload?.reviewId !== 'string' || !payload.reviewId) throw new ThreadsError('invalid', 'threads:discard-review: reviewId is required');
+    return discard(resolveCaller(ctx, payload), ctx, payload.reviewId, { store: getStore(ctx), sync: defaultSync(ctx) });
+  },
 };
