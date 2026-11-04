@@ -98,7 +98,6 @@ test('reverseOps removes a started thread with a later reply by someone else and
   const back = reverseOps(withBobReply, published.applied, { authorName: 'Alice' });
   assert.deepEqual(back.skipped, []);
   assert.equal(back.content, NORMAL);
-  assert.match(back.content, /and plain target text\./);
 });
 
 test('reverseOps re-parents later replies to a removed reply', () => {
@@ -116,11 +115,11 @@ test('reverseOps skips ops whose target is gone, reverses the rest, and a second
   ], NORMAL);
   // someone deleted t-new since the publish
   const gone = parser.replaceThreadsBlock(ops.content, parser.parseThreadsFromContent(ops.content).filter((t) => t.id !== 't-new'));
-  const first = reverseOps(gone, ops.applied);
+  const first = reverseOps(gone, ops.applied, { authorName: 'Alice' });
   assert.deepEqual(first.skipped.map((s) => s.opId), [ops.applied[0].opId]);
   assert.match(first.skipped[0].reason, /t-new/);
   assert.equal(first.content, NORMAL);
-  const second = reverseOps(first.content, ops.applied);
+  const second = reverseOps(first.content, ops.applied, { authorName: 'Alice' });
   assert.equal(second.content, first.content);
 });
 
@@ -240,9 +239,16 @@ test('a discard in the window after a failed journal reset is not undone by the 
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
   const discarded = manifestOf(id);
 
-  await actions['threads:publish-review'](ALICE, ctx());
+  // nothing left to publish: the reset is finished, not reported as a publish
+  await assert.rejects(actions['threads:publish-review'](ALICE, ctx()), /threads\/empty-review/);
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'discarded comment did not come back');
   assert.deepEqual(manifestOf(id), discarded);
-  assert.equal(manifestOf(id).state, 'discarded');
+  // ops drafted in the window publish under the new id
+  await fill('k-alice', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-after', parentId: null, body: 'After' }]);
+  const next = await actions['threads:publish-review'](ALICE, ctx());
+  assert.notEqual(next.reviewId, id);
+  assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-after')));
+  assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
+  assert.deepEqual(manifestOf(id), discarded);
   assert.notEqual((await real.load('k-alice')).review.id, id, 'the journal was reset');
 });

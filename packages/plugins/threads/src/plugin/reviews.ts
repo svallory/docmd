@@ -534,6 +534,10 @@ export async function publish(
   { store, sync, now = Date.now, newId = (prefix) => prefix + crypto.randomBytes(4).toString('hex') }: PublishDeps,
 ): Promise<PublishResult> {
   return sync.withLock(async () => {
+    // The journal's review was published, then discarded, but its reset never finished: finish it
+    // now so only ops drafted since are published (under the new id), never the discarded ones.
+    const stale = await readManifest(ctx, (await store.load(caller.key)).review.id);
+    if (stale?.state === 'discarded') await finishEarlierPublish(ctx, store, caller.key, newId);
     const journal = await store.load(caller.key);
     if (!journal.ops.length) {
       if (!journal.profile) throw new ThreadsError('empty-review', 'there is nothing to publish');
