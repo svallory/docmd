@@ -98,7 +98,8 @@ export type DraftOp =
   | { kind: 'add-comment'; opId: string; at: string; file: string; threadId: string; commentId: string; parentId: string | null; body: string }
   | { kind: 'edit-comment'; opId: string; at: string; file: string; threadId: string; commentId: string; body: string }
   | { kind: 'delete-comment'; opId: string; at: string; file: string; threadId: string; commentId: string }
-  | { kind: 'delete-thread'; opId: string; at: string; file: string; threadId: string }
+  /** `commentIds`: the published comments the caller saw; publish skips the op if the thread has gained others. */
+  | { kind: 'delete-thread'; opId: string; at: string; file: string; threadId: string; commentIds?: string[] }
   | { kind: 'resolve-thread'; opId: string; at: string; file: string; threadId: string }
   | { kind: 'toggle-reaction'; opId: string; at: string; file: string; threadId: string; commentId: string; emoji: string };
 

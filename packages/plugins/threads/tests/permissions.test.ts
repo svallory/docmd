@@ -73,7 +73,7 @@ const forbidden = (p: Promise<unknown>) => assert.rejects(p, /^ThreadsError: thr
 const anchor = { quote: 'x', prefix: null, suffix: null, selector: null, offset: null, blockText: null };
 
 // alice's published thread: two comments by her (the second is a reply), in one published review
-let tA: string, c1: string, c2: string, tF: string, tH: string;
+let tA: string, c1: string, c2: string, tF: string, tH: string, tG: string, tI: string;
 before(async () => {
   project = tempProject();
   page = project.file;
@@ -89,6 +89,10 @@ before(async () => {
   await call('add-comment', 'bob', { threadId: tF, body: 'flat reply' });
   await call('publish-review', 'bob');
   tH = (await call('add-thread', 'alice', { body: 'solo', anchor })).id; // alice's, no replies from anyone else
+  await call('publish-review', 'alice');
+  // tG and tI: alice's own published threads, for the stale-draft cases (each is touched by one test)
+  tG = (await call('add-thread', 'alice', { body: 'opening', anchor })).id;
+  tI = (await call('add-thread', 'alice', { body: 'all mine', anchor })).id;
   await call('publish-review', 'alice');
   await call('add-thread', 'alice', { body: 'to discard', anchor });
   reviewId = (await call('whoami', 'alice')).journal.review.id;
@@ -123,6 +127,25 @@ test('delete-comment on an opener whose only reply is the author\'s own draft is
   await call('add-comment', 'alice', { threadId: tH, body: 'my own reply' });
   const opener = (await call('get-threads', 'alice')).find((t: any) => t.id === tH).comments[0].id;
   await call('delete-comment', 'alice', { threadId: tH, commentId: opener });
+});
+
+const published = async (threadId: string) => (await call('get-threads', 'carol')).find((t: any) => t.id === threadId);
+
+test('a stale draft cannot delete an opener that has since gained a reply', async () => {
+  const opener = (await published(tG)).comments[0].id;
+  await call('delete-comment', 'alice', { threadId: tG, commentId: opener }); // her view: no replies, a plain delete
+  await call('add-comment', 'bob', { threadId: tG, body: 'flat reply' });
+  await call('publish-review', 'bob');
+  await call('publish-review', 'alice');
+  assert.deepEqual((await published(tG)).comments.map((c: any) => c.body), ['opening', 'flat reply']);
+});
+
+test('a stale delete-thread draft cannot delete a comment added since', async () => {
+  await call('delete-thread', 'alice', { threadId: tI }); // her view: every comment is hers
+  await call('add-comment', 'bob', { threadId: tI, body: 'bob arrived' });
+  await call('publish-review', 'bob');
+  await call('publish-review', 'alice');
+  assert.deepEqual((await published(tI)).comments.map((c: any) => c.body), ['all mine', 'bob arrived']);
 });
 
 test('delete-thread: forbidden unless the caller owns every comment', async () => {

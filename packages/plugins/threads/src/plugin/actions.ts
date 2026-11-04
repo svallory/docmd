@@ -254,7 +254,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
       assertCan(caller, 'delete-comment', { authorKey: wholeThread ? null : target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
       if (wholeThread) {
         drop(tx, opsOnThread(tx, threadId));
-        push(tx, { kind: 'delete-thread', file: tx.file, threadId });
+        push(tx, { kind: 'delete-thread', file: tx.file, threadId, commentIds: thread.comments.filter((c) => !c.draft).map((c) => c.id) });
         return;
       }
       const drafted = draftedCommentOp(tx, commentId);
@@ -277,7 +277,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
       assertCan(caller, 'delete-thread', { authorKeys: thread.comments.filter((c) => !c.draft).map((c) => c.authorKey) }, getOptions(ctx).permissions);
       const drafted = draftedThreadOp(tx, threadId);
       drop(tx, opsOnThread(tx, threadId));
-      if (!drafted) push(tx, { kind: 'delete-thread', file: tx.file, threadId });
+      if (!drafted) push(tx, { kind: 'delete-thread', file: tx.file, threadId, commentIds: thread.comments.filter((c) => !c.draft).map((c) => c.id) });
     });
     return { deleted: true };
   },

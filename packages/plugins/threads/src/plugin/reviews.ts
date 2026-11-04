@@ -214,6 +214,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
       case 'delete-comment': {
         const idx = thread ? thread.comments.findIndex((c) => c.id === op.commentId) : -1;
         if (!thread || idx < 0) { skip(op, thread ? `comment ${op.commentId} not found` : `thread ${op.threadId} not found`); break; }
+        if (idx === 0 && thread.comments.length > 1) { skip(op, 'opening comment has replies; delete the thread'); break; }
         const [removed] = thread.comments.splice(idx, 1);
         changed = true;
         done(op, { before: { comment: removed, index: idx } });
@@ -222,6 +223,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
       case 'delete-thread': {
         const idx = threads.findIndex((t) => t.id === op.threadId);
         if (idx < 0) { skip(op, `thread ${op.threadId} not found`); break; }
+        if (op.commentIds && threads[idx].comments.some((c) => !op.commentIds!.includes(c.id))) { skip(op, 'thread has new comments'); break; }
         const [removed] = threads.splice(idx, 1);
         text = unwrapThread(text, op.threadId);
         changed = true;
