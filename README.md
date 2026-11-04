@@ -247,22 +247,22 @@ The values above are the defaults. For example, to listen on all interfaces with
 }
 ```
 
-| Key                | Default       | Meaning                                                                 |
-| :----------------- | :------------ | :---------------------------------------------------------------------- |
-| `host`             | `127.0.0.1`   | Interface to bind                                                       |
-| `port`             | `3000`        | Port to listen on                                                       |
-| `actions.enabled`  | `false`       | Accept action requests from the allowed origins                                         |
-| `actions.origins`  | `[]`          | Allowed origins for actions. Required (non-empty) when actions are on   |
-| `mcp.enabled`      | `false`       | Expose the MCP server at `/mcp`                                         |
-| `mcp.origins`      | `[]`          | Allowed origins for MCP. A request with an `Origin` header not listed here is refused; a request without one is served |
+| Key               | Default     | Meaning                                                                                                                |
+| :---------------- | :---------- | :--------------------------------------------------------------------------------------------------------------------- |
+| `host`            | `127.0.0.1` | Interface to bind                                                                                                      |
+| `port`            | `3000`      | Port to listen on                                                                                                      |
+| `actions.enabled` | `false`     | Accept plugin actions over WebSocket (same port) from the allowed origins; off: upgrades get 404                       |
+| `actions.origins` | `[]`        | Allowed origins for actions. Required (non-empty) when actions are on                                                  |
+| `mcp.enabled`     | `false`     | Expose the MCP server at `/mcp`                                                                                        |
+| `mcp.origins`     | `[]`        | Allowed origins for MCP. A request with an `Origin` header not listed here is refused; a request without one is served |
 
 **Host and port precedence:** the CLI flags `--host` / `--port` win over the `DOCMD_HOST` and `PORT` environment variables, which win over `serve.host` / `serve.port`, which win over the defaults. `DOCMD_HOST` and `PORT` are the only environment variables `serve` reads; origins and feature toggles are config-only.
 
-**Origins:** `serve.actions.origins` must list full origins such as `https://docs.example.com`. `*` is not accepted, and `serve` refuses to start with actions enabled and no origins, or with an invalid origin.
+**Origins:** `serve.actions.origins` and `serve.mcp.origins` must list full origins such as `https://docs.example.com`; `*` is not accepted. `serve` refuses to start with an invalid origin in either list, or with actions enabled and `actions.origins` empty.
 
 **Endpoints:**
 
-* `GET /healthz` returns `{"status":"ok","version":...}` once the server is up.
+* `GET`/`HEAD /healthz` returns `200` `{"status":"ok","version":"…"}` after the first build finishes; until then every request, `/healthz` included, gets `503` with `Retry-After: 1`.
 * `POST /mcp` serves MCP over HTTP (JSON-RPC 2.0, no sessions, no SSE) when `serve.mcp.enabled` is `true`; otherwise it returns 404. With `serve.mcp.enabled`, `serve` refuses to start when `--config` names a file other than the default `docmd.config.*`, because the MCP tools read the default config.
 
 **Trust:** docmd has no built-in authentication. If your deployment puts an authenticating reverse proxy in front of `serve`, only that proxy may set identity headers on requests: `serve` passes request headers through unchanged and does not verify them, so make sure clients cannot reach the port directly.
