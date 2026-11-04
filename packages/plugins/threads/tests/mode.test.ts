@@ -31,6 +31,18 @@ test('widgetState: publishing disables Publish and stops the ring', () => {
   assert.deepEqual([s.variant, s.publishDisabled, s.ringRunning], ['publishing', true, false]);
 });
 
+test('widgetState: before the first load the count is unknown, not 0, and Publish is disabled', () => {
+  const s = widgetState({ ...base, mode: 'auto', pendingCount: null });
+  assert.deepEqual([s.label, s.publishDisabled, s.ringRunning], ['…', true, false]);
+});
+
+test('widgetState: errorLine echoes the error and playPauseAction is the opposite of the mode', () => {
+  assert.equal(widgetState({ ...base, error: 'boom' }).errorLine, 'boom');
+  assert.equal(widgetState({ ...base }).errorLine, null);
+  assert.equal(widgetState({ ...base, mode: 'auto' }).playPauseAction, 'pause');
+  assert.equal(widgetState({ ...base, mode: 'collect' }).playPauseAction, 'play');
+});
+
 test('widgetState: orphan line is singular, plural, or absent', () => {
   assert.equal(widgetState({ ...base, orphanedMine: 1 }).orphanLine, '1 of your comments lost its anchor');
   assert.equal(widgetState({ ...base, orphanedMine: 2 }).orphanLine, '2 of your comments lost their anchor');
@@ -46,6 +58,7 @@ function rig(seconds = 60) {
     seconds,
     now: () => clock,
     schedule: (cb, ms) => {
+      assert.ok(ms >= 0, `scheduled with negative delay ${ms}`);
       const id = next++;
       pending.set(id, { cb, at: clock + ms });
       return () => void pending.delete(id);
@@ -88,9 +101,6 @@ test('timer: a later updatedAt before firing reschedules', () => {
 });
 
 test('timer: a new timer from the same updatedAt (reload) fires at the same instant', () => {
-  const r = rig();
-  r.timer.update({ mode: 'auto', updatedAt: new Date(T0).toISOString(), pendingCount: 1 });
-  r.advance(45_000);
   const reloaded = rig();
   reloaded.setClock(T0 + 45_000);
   reloaded.timer.update({ mode: 'auto', updatedAt: new Date(T0).toISOString(), pendingCount: 1 });
@@ -103,6 +113,7 @@ test('timer: an updatedAt already past fires immediately', () => {
   const r = rig();
   r.setClock(T0 + 500_000);
   r.timer.update({ mode: 'auto', updatedAt: T0, pendingCount: 1 });
+  assert.equal(r.timer.remainingMs(), 0);
   r.advance(0);
   assert.equal(r.fired(), 1);
 });

@@ -57,6 +57,9 @@ const defaults: Record<string, string> = {
   lostAnchorPlural: '{n} of your comments lost their anchor',
   publishFailed: 'Publish failed',
   skippedOps: '{n} changes could not be applied',
+  skippedOpsOne: '{n} change could not be applied',
+  modeFailed: 'Could not change publishing mode',
+  loadFailed: 'Could not load your comments',
   draft: 'Draft',
 };
 

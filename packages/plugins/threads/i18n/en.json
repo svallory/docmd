@@ -51,5 +51,8 @@
   "lostAnchorPlural": "{n} of your comments lost their anchor",
   "publishFailed": "Publish failed",
   "skippedOps": "{n} changes could not be applied",
-  "draft": "Draft"
+  "draft": "Draft",
+  "skippedOpsOne": "{n} change could not be applied",
+  "modeFailed": "Could not change publishing mode",
+  "loadFailed": "Could not load your comments"
 }

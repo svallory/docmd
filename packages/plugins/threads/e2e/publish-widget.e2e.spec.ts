@@ -28,8 +28,8 @@ test("a comment counts as unpublished until Publish, and the widget sits bottom-
 
   // Collect mode so the countdown cannot publish under the test.
   const pp = page.getByTestId("tpw-playpause");
-  if ((await pp.getAttribute("title")) === "Pause auto-publishing") await pp.click();
-  await expect(pp).toHaveAttribute("title", "Resume auto-publishing");
+  if ((await pp.getAttribute("data-mode")) === "auto") await pp.click();
+  await expect(pp).toHaveAttribute("data-mode", "collect");
 
   await page.evaluate(() =>
     docmd.call("threads:add-thread", {

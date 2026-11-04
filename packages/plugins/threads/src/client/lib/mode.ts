@@ -72,7 +72,8 @@ export function createPublishTimer({ seconds, now, schedule }: PublishTimerOptio
 export interface WidgetStateInput {
   autoPublish: boolean;
   mode: PublishMode;
-  pendingCount: number;
+  /** `null` until the first successful `whoami`: the count is then unknown, not 0. */
+  pendingCount: number | null;
   orphanedMine: number;
   publishing: boolean;
   error?: string | null;
@@ -87,6 +88,9 @@ export interface WidgetState {
   ringRunning: boolean;
   label: string;
   orphanLine: string | null;
+  errorLine: string | null;
+  /** What the play/pause button does when clicked. */
+  playPauseAction: 'pause' | 'play';
 }
 
 const FALLBACK: Record<string, string> = {
@@ -98,7 +102,9 @@ const FALLBACK: Record<string, string> = {
 
 export function widgetState(input: WidgetStateInput): WidgetState {
   const tr = input.t ?? ((k: string) => FALLBACK[k] ?? k);
-  const { pendingCount, orphanedMine } = input;
+  const { orphanedMine } = input;
+  const known = input.pendingCount !== null;
+  const pendingCount = input.pendingCount ?? 0;
   const variant: WidgetState['variant'] = input.publishing
     ? 'publishing'
     : !input.autoPublish
@@ -107,11 +113,13 @@ export function widgetState(input: WidgetStateInput): WidgetState {
   return {
     variant,
     showPlayPause: input.autoPublish,
-    publishDisabled: input.publishing || pendingCount < 1,
+    publishDisabled: input.publishing || !known || pendingCount < 1,
     ringRunning: input.autoPublish && input.mode === 'auto' && !input.publishing && pendingCount >= 1,
-    label: tr(pendingCount === 1 ? 'unpublishedCountOne' : 'unpublishedCount').replace('{n}', String(pendingCount)),
+    label: !known ? '…' : tr(pendingCount === 1 ? 'unpublishedCountOne' : 'unpublishedCount').replace('{n}', String(pendingCount)),
     orphanLine: orphanedMine > 0
       ? tr(orphanedMine === 1 ? 'lostAnchor' : 'lostAnchorPlural').replace('{n}', String(orphanedMine))
       : null,
+    errorLine: input.error || null,
+    playPauseAction: input.mode === 'auto' ? 'pause' : 'play',
   };
 }
