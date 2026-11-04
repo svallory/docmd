@@ -19,6 +19,13 @@ const PLAYGROUND_INDEX = path.resolve(
   "../../../_playground/docs/index.md",
 );
 
+/** Snapshot another playground page a test will write to; the returned function restores it. */
+export function snapshotPlaygroundPage(name: string): () => void {
+  const file = path.join(path.dirname(PLAYGROUND_INDEX), name);
+  const original = fs.readFileSync(file, "utf-8");
+  return () => fs.writeFileSync(file, original, "utf-8");
+}
+
 /** Path to the fixture copy of the original playground markdown. */
 const FIXTURE_INDEX = path.resolve(__dirname, "fixtures/playground-index.md");
 

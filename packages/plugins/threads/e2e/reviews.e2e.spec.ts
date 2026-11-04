@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { cleanThreads, publishReview, setAuthor } from "./helpers.ts";
+import { cleanThreads, publishReview, setAuthor, snapshotPlaygroundPage } from "./helpers.ts";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -80,21 +80,38 @@ test("a published review is listed, its quote links to the thread (same page and
 });
 
 test("a quote link from another page loads the page, scrolls to the thread and flashes it", async ({ page }) => {
-  await page.goto("/mermaid-preview/");
-  await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
-  const quote = await page.evaluate(firstWords);
-  await seedAndPublish(page, quote, "cross-page");
+  const restore = snapshotPlaygroundPage("mermaid-preview.md");
+  try {
+    await page.goto("/mermaid-preview/");
+    await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+    const quote = await page.evaluate(firstWords);
+    const reviewId = await seedAndPublish(page, quote, "cross-page");
 
-  await page.goto("/");
-  await openReviews(page);
-  await page.getByTestId("review-op").filter({ hasText: quote }).first().click();
-  await expect(page).toHaveURL(/mermaid-preview\/#thread-/);
-  await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
-  await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
-  await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
+    await page.goto("/");
+    await openReviews(page);
+    await page.locator(`[data-review-id="${reviewId}"]`).getByTestId("review-op").click();
+    await expect(page).toHaveURL(/mermaid-preview\/#thread-/);
+    await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
+    await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
+    await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
+  } finally {
+    restore();
+  }
 });
 
-test("the open review's title form saves, and a deep link to an unknown thread does nothing", async ({ page }) => {
+test("a deep link to an unknown thread neither scrolls nor flashes, after a full load with a real highlight on the page", async ({ page }) => {
+  const quote = await page.evaluate(firstWords);
+  await seedAndPublish(page, quote, "unknown id");
+  await page.goto("/mermaid-preview/");
+  await page.goto("/#thread-nope");
+  await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
+  // Threads are loaded once the highlight exists; give the deep-link handler its turn on the same tick.
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  await expect(page.locator(".threads-thread--flash")).toHaveCount(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test("the open review's title form saves", async ({ page }) => {
   // whoami has a journal only once a draft exists.
   await page.evaluate(() =>
     docmd.call("threads:add-thread", {
@@ -105,9 +122,7 @@ test("the open review's title form saves, and a deep link to an unknown thread d
       body: "title form",
     }),
   );
-  await page.goto("/#thread-nope");
-  await expect(page.locator(".threads-thread--flash")).toHaveCount(0);
-
+  await page.reload();
   await openReviews(page);
   await page.getByTestId("review-title").fill("My review");
   await page.getByTestId("review-save").click();

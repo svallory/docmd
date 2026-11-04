@@ -88,6 +88,15 @@ export class ThreadsReviewsPanel extends LitElement {
     }
   }
 
+  /** The link already points at the open URL: the browser would do nothing, so ask the host to reveal the thread. */
+  private onOpClick(e: Event): void {
+    const a = e.currentTarget as HTMLAnchorElement;
+    const url = new URL(a.href, location.href);
+    if (url.pathname !== location.pathname || url.hash !== location.hash) return;
+    e.preventDefault();
+    this.dispatchEvent(new CustomEvent('reveal-thread', { bubbles: true, composed: true }));
+  }
+
   private renderForm() {
     if (!this.journal) return nothing;
     return html`
@@ -115,7 +124,8 @@ export class ThreadsReviewsPanel extends LitElement {
         <ul class="tc-review__ops">
           ${r.ops.map(op => html`
             <li><a class="tc-review__link" data-testid="review-op"
-              href=${threadHref(op.file, op.threadId, site.siteBase, site.srcRoot)}>${op.quote ?? op.pageTitle ?? op.file}</a></li>`)}
+              href=${threadHref(op.file, op.threadId, site.siteBase, site.srcRoot)}
+              @click=${(e: Event) => this.onOpClick(e)}>${op.quote ?? op.pageTitle ?? op.file}</a></li>`)}
         </ul>
         ${discarded ? nothing : html`
           <sl-button size="small" variant="text" data-testid="review-discard" @click=${() => this.askDiscard(r.id)}>${t('discard')}</sl-button>`}
