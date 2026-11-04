@@ -94,5 +94,6 @@ test('the third add by one key in a minute rejects, another key passes, the wind
   await call('add-thread', { ...B2, body: 'other key' }, limits);
   await call('edit-comment', { ...A2, threadId: first.id, commentId: first.comments[0].id, body: 'edited' }, limits);
   await call('toggle-reaction', { ...A2, threadId: first.id, commentId: first.comments[0].id, emoji: '👍' }, limits);
-  assert.equal((await ops('a2')).length, 3); // two adds, one reaction; the edit folded into the drafted add
+  await call('resolve-thread', { ...A2, threadId: first.id }, limits);
+  assert.equal((await ops('a2')).length, 4); // two adds, a reaction and a resolve; the edit folded into the drafted add
 });
