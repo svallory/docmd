@@ -14,7 +14,7 @@
 
 import http from 'http';
 import path from 'path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fsUtils as fs, WorkerPool } from '@docmd/utils';
 import { TUI } from '@docmd/api';
@@ -42,6 +42,21 @@ function readVersion(): string {
   } catch {
     return 'unknown';
   }
+}
+
+/**
+ * serve.mcp reads the default docmd.config.* (the MCP handler loads it itself),
+ * so it cannot be combined with a --config naming a different file. Returns the
+ * refusal message, or null when MCP is off or --config names the default file.
+ */
+export function mcpConfigConflict(configPathOption: string, config: any, cwd: string): string | null {
+  if (config?.serve?.mcp?.enabled !== true) return null;
+  if (configPathOption === 'docmd.config.js') return null;
+  // Same candidate order as loadConfig's default lookup.
+  const candidates = ['docmd.config.jsonc', 'docmd.config.json', 'docmd.config.ts', 'docmd.config.js', 'docmd.config.mjs', 'config.js'];
+  const defaultFile = candidates.map((c) => path.resolve(cwd, c)).find((p) => existsSync(p));
+  if (defaultFile && path.resolve(cwd, configPathOption) === defaultFile) return null;
+  return 'serve.mcp requires the default docmd.config.* (do not combine it with --config): the MCP tools read the default config, whose src and exclude may differ.';
 }
 
 /**
@@ -138,9 +153,8 @@ export async function startServe(
 
   // The MCP handler always loads the default config, so a custom --config would
   // expose a different src/exclude over /mcp. Refuse rather than leak.
-  if (config.serve.mcp.enabled === true && configPathOption !== 'docmd.config.js') {
-    failWith('serve.mcp requires the default docmd.config.* (do not combine it with --config): the MCP tools read the default config, whose src and exclude may differ.', { section: 'Invalid serve configuration' });
-  }
+  const mcpConflict = mcpConfigConflict(configPathOption, config, CWD);
+  if (mcpConflict) failWith(mcpConflict, { section: 'Invalid serve configuration' });
 
   // 4. Bind address: CLI > env > config > defaults.
   const { host, port } = resolveServeBind({

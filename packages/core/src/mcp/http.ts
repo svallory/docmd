@@ -18,7 +18,7 @@ import type { McpHandler } from './handler.js';
 /** Largest request body accepted, in bytes. */
 const MAX_BODY_BYTES = 1024 * 1024;
 
-export interface McpHttpOptions {
+interface McpHttpOptions {
   handler: McpHandler;
   /** Allowed `Origin` values. An `Origin` header, when present, must match one. */
   origins: string[];
