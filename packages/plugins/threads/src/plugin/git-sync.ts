@@ -155,61 +155,90 @@ export function getSync(ctx: ActionContext, deps: { execFile?: ExecFile } = {}):
   return sync;
 }
 
-export interface PullDeps {
+interface PullDeps {
   execFile?: ExecFile;
   /** Defaults to the project's shared lock, the one publishes queue behind. */
   lock?: Lock;
 }
 
-export interface PullTimers {
+interface PullTimers {
   setInterval: (fn: () => void, ms: number) => unknown;
   clearInterval: (id: any) => void;
 }
 
+/** Pages the checkout moved past but the host has not rebuilt yet (a failed rebuild is retried on the next tick). */
+const pending = new Map<string, { all: boolean; files: Set<string> }>();
+
 /**
  * One pull: fetch the branch and, when `origin/<branch>` moved, reset the checkout to it and
- * rebuild what changed (only the pages when every changed path is markdown, else everything).
- * Runs under the project lock, so it never interleaves with a publish. Untracked and ignored
- * files (the journals) survive `reset --hard`.
+ * rebuild what changed (only the pages when every change is an edit of a markdown page under
+ * the docs source, else everything). The git work runs under the project lock, so it never
+ * interleaves with a publish. Untracked and ignored files (the journals) survive `reset --hard`.
+ * Changes whose rebuild failed stay pending and are rebuilt on the next call.
  */
 export async function pullOnce(handle: ServerHandle, deps: PullDeps = {}): Promise<void> {
   const opts = getOptions(handle).git;
   if (!opts) return;
   const { branch, remote } = opts;
   const cwd = handle.projectRoot;
+  const src = String(handle.config?.src || '').replace(/^\.?\/+|\/+$/g, '');
   const run: ExecFile = deps.execFile ?? (promisify(nodeExecFile) as unknown as ExecFile);
   const git = async (args: string[]) =>
     (await run('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })).stdout.trim();
   const auth = ['-c', 'credential.helper=', '-c', `credential.helper=${CREDENTIAL_HELPER}`];
-  const lock = deps.lock ?? lockFor(path.join(cwd, handle.config?.src || ''));
+  const root = path.join(cwd, src);
+  const lock = deps.lock ?? lockFor(root);
+  const isPage = (f: string) => f.endsWith('.md') && (!src || f.startsWith(`${src}/`));
 
-  let changed: string[] = [];
-  const moved = await lock.withLock(async () => {
+  const queue = pending.get(root) ?? { all: false, files: new Set<string>() };
+  pending.set(root, queue);
+  await lock.withLock(async () => {
     await git([...auth, 'fetch', remote, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
-    if ((await git(['rev-parse', 'HEAD'])) === (await git(['rev-parse', `origin/${branch}`]))) return false;
-    changed = (await git(['diff', '--name-only', 'HEAD', `origin/${branch}`])).split('\n').filter(Boolean);
+    if ((await git(['rev-parse', 'HEAD'])) === (await git(['rev-parse', `origin/${branch}`]))) return;
+    // Paths relative to the project (cwd), the way `rebuild` takes them.
+    const lines = (await git(['diff', '--name-status', '--relative', 'HEAD', `origin/${branch}`])).split('\n').filter(Boolean);
+    for (const line of lines) {
+      const cols = line.split('\t');
+      const file = cols[cols.length - 1];
+      if (cols[0] === 'M' && isPage(file)) queue.files.add(file);
+      else queue.all = true;
+    }
+    if (!lines.length) queue.all = true; // moved, but nothing under the project: be safe
     await git(['reset', '--hard', `origin/${branch}`]);
-    return true;
   });
-  if (!moved) return;
-  await handle.rebuild(changed.length > 0 && changed.every((f) => f.endsWith('.md')) ? changed : undefined);
+  if (!queue.all && !queue.files.size) return;
+  const sent = { all: queue.all, files: [...queue.files] };
+  await handle.rebuild(sent.all ? undefined : sent.files);
+  if (sent.all) queue.all = false;
+  sent.files.forEach((f) => queue.files.delete(f));
 }
 
 /** Pulls every `pullSeconds`; a failed pull is logged (without the remote or any header) and the next tick runs. Returns `stop`. */
 export function startPullLoop(
   handle: ServerHandle,
   timers: PullTimers = { setInterval, clearInterval },
-  deps: PullDeps = {},
 ): () => void {
   const opts = getOptions(handle).git;
   if (!opts) return () => undefined;
+  // What `remote` points at (a URL or path, possibly with credentials): resolved once, kept out of the log.
+  const url = (promisify(nodeExecFile) as unknown as ExecFile)('git', ['remote', 'get-url', opts.remote], { cwd: handle.projectRoot, env: process.env })
+    .then((r) => r.stdout.trim(), () => '');
+  let inFlight = false;
   const id = timers.setInterval(() => {
-    pullOnce(handle, deps).catch((e) => {
-      const raw = e instanceof Error ? e.message : String(e);
-      // The remote may be a URL with credentials, or reveal paths: it never reaches the log.
-      const safe = raw.split(opts.remote).join('<remote>').replace(/\/\/[^@/\s]*@/g, '//***@');
-      console.error(`[threads] git pull failed: ${safe.split('\n')[0]}`);
-    });
+    if (inFlight) return; // a slow remote must not queue pulls in front of publishes
+    inFlight = true;
+    pullOnce(handle)
+      .catch(async (e) => {
+        const err = e as { stderr?: unknown; message?: unknown };
+        const text = typeof err?.stderr === 'string' && err.stderr.trim()
+          ? err.stderr
+          : String(err?.message ?? e).split('\n').filter((l) => !l.startsWith('Command failed:')).join('\n');
+        let line = text.split('\n').find((l) => l.trim()) ?? 'git failed';
+        for (const secret of [opts.remote, await url]) if (secret) line = line.split(secret).join('<remote>');
+        console.error(`[threads] git pull failed: ${line.replace(/\/\/[^@/\s]*@/g, '//***@')}`);
+      })
+      .finally(() => { inFlight = false; });
   }, opts.pullSeconds * 1000);
+  (id as { unref?: () => void } | null)?.unref?.();
   return () => timers.clearInterval(id);
 }
