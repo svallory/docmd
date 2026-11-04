@@ -1068,6 +1068,14 @@ export function injectComponentStyles(): void {
     body.tc-sidebar-active .tc-has-sidebar { padding-right: 40px; }
 
     /* ========= Floating threads toggle / right-docked slide tab ========= */
+    .tc-comment__draft {
+      margin-left: 6px;
+      padding: 0 6px;
+      border-radius: 999px;
+      border: 1px solid var(--tc-border);
+      color: var(--tc-muted-fg);
+      font-size: 11px;
+    }
     .threads-fab {
       position: fixed;
       top: 50%;
