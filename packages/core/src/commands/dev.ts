@@ -175,7 +175,8 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (h) => clearTimeout(h as any),
     signatureChanged: (f) => signatureTracker.hasChanged(f),
-    isBlocked: () => Date.now() - lastConfigRebuildAt < CONFIG_QUIET_MS,
+    resetSignature: (f) => signatureTracker.forget(f),
+    isRpcWritten: wasWrittenByRpc,
     build: async (targets) => {
       const rebuildElapsed = TUI.timer();
       const label = !targets ? 'assets' : targets.length === 1 ? path.relative(CWD, targets[0]) : `${targets.length} files`;
