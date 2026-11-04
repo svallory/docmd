@@ -70,8 +70,9 @@ export class ThreadsReviewsPanel extends LitElement {
       this.error = err instanceof api.ThreadsClientError ? err.text : t('discardFailed');
       return;
     }
-    await this.refresh();
-    this.dispatchEvent(new CustomEvent('reviews-changed', { bubbles: true, composed: true }));
+    // A host that handles the event (and refreshes us as part of it) cancels it; otherwise refresh here.
+    const unhandled = this.dispatchEvent(new CustomEvent('reviews-changed', { bubbles: true, composed: true, cancelable: true }));
+    if (unhandled) await this.refresh();
   }
 
   private async save(e: Event): Promise<void> {

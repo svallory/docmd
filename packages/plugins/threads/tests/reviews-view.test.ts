@@ -11,16 +11,17 @@ const thread = (id: string, extra: Partial<Thread> = {}): Thread => ({
 });
 
 describe('threadHref', () => {
-  const table: Array<[string, string, string, string]> = [
-    ['docs/guide/intro.md', '/', undefined as never, '/guide/intro/#thread-t-1'],
-    ['docs/index.md', '/', undefined as never, '/#thread-t-1'],
-    ['docs/guide/index.md', '/', undefined as never, '/guide/#thread-t-1'],
-    ['docs/guide/README.md', '/', undefined as never, '/guide/#thread-t-1'],
-    ['docs/README.md', '/', undefined as never, '/#thread-t-1'],
-    ['docs/a/b/c/deep.md', '/', undefined as never, '/a/b/c/deep/#thread-t-1'],
-    ['docs/guide/intro.md', '/site/', undefined as never, '/site/guide/intro/#thread-t-1'],
-    ['docs/guide/intro.md', '/site', undefined as never, '/site/guide/intro/#thread-t-1'],
-    ['docs/My Guide/Getting Started.md', '/', undefined as never, '/My-Guide/Getting-Started/#thread-t-1'],
+  const table: Array<[string, string, string | undefined, string]> = [
+    ['docs/guide/intro.md', '/', undefined, '/guide/intro/#thread-t-1'],
+    ['docs/index.md', '/', undefined, '/#thread-t-1'],
+    ['docs/guide/index.md', '/', undefined, '/guide/#thread-t-1'],
+    // Documented limit: README always collapses to its folder, even when the folder also has an index page.
+    ['docs/guide/README.md', '/', undefined, '/guide/#thread-t-1'],
+    ['docs/README.md', '/', undefined, '/#thread-t-1'],
+    ['docs/a/b/c/deep.md', '/', undefined, '/a/b/c/deep/#thread-t-1'],
+    ['docs/guide/intro.md', '/site/', undefined, '/site/guide/intro/#thread-t-1'],
+    ['docs/guide/intro.md', '/site', undefined, '/site/guide/intro/#thread-t-1'],
+    ['docs/My Guide/Getting Started.md', '/', undefined, '/My-Guide/Getting-Started/#thread-t-1'],
     ['content/guide/intro.md', '/', 'content/', '/guide/intro/#thread-t-1'],
   ];
   for (const [file, base, root, want] of table) {
