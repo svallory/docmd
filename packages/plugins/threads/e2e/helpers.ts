@@ -13,11 +13,6 @@ import { DOCS_DIR, PAGES } from "./playground.ts";
 /**
  * Restore the playground markdown to the pages global-setup snapshotted, removing any
  * dynamically-added threads/highlights from test runs, and wait until the dev server serves them clean.
- *
- * Workaround for a core dev-server bug: its watcher drops genuine file edits made within 1 s of a rebuild
- * finishing (CONTENT_QUIET_MS in the dev command), so a restore can be missed and is rewritten until served.
- * Remove the retry loop when core stops dropping edits (docmd-53b).
- * At most 3 attempts x 4 s per page keeps the worst case (24 s) under the 30 s hook timeout.
  */
 export async function cleanThreads(page: Page): Promise<void> {
   const snapshot = process.env["THREADS_E2E_SNAPSHOT"];
@@ -26,15 +21,8 @@ export async function cleanThreads(page: Page): Promise<void> {
   fs.rmSync(path.join(DOCS_DIR, ".threads", "drafts", "TestUser.json"), { force: true });
   for (const { file, route } of PAGES) {
     const served = async () => (await (await page.request.get(route)).text()).includes('<mark class="threads-highlight"');
-    for (let attempt = 1; ; attempt++) {
-      fs.copyFileSync(path.join(snapshot, file), path.join(DOCS_DIR, file));
-      try {
-        await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 4_000 }).toBe(false);
-        break;
-      } catch (e) {
-        if (attempt === 3) throw e;
-      }
-    }
+    fs.copyFileSync(path.join(snapshot, file), path.join(DOCS_DIR, file));
+    await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 10_000 }).toBe(false);
   }
 }
 
@@ -56,21 +44,11 @@ const servedHtml = (page: Page): Promise<string> =>
  * Publish the open review of `author` (comments are drafts until published); an empty review rejects.
  * Publishing writes the markdown and the dev server rebuilds asynchronously, so this resolves once the
  * served page differs from before the publish: a reload right after would otherwise race the rebuild.
- * Workaround for the same core dev-server bug as cleanThreads (it drops edits within 1 s of a rebuild): if the
- * publish landed in that window the page is rebuilt by appending a newline to its source (the next cleanThreads
- * restores it). Remove the fallback with the core fix (docmd-53b).
  */
 export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
   const before = await servedHtml(page);
-  const sourceFile = await page.evaluate(() => document.body.dataset["sourceFile"]);
   const result = await page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
-  const rebuilt = () => expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 4_000 }).not.toBe(before);
-  try {
-    await rebuilt();
-  } catch {
-    if (sourceFile) fs.appendFileSync(path.resolve(DOCS_DIR, "..", sourceFile), "\n");
-    await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 15_000 }).not.toBe(before);
-  }
+  await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 15_000 }).not.toBe(before);
   return result;
 }
 

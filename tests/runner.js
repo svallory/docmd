@@ -212,6 +212,11 @@ addInProcess(
   await import('./cli-contracts/host-flag.test.js')
 );
 addInProcess(
+  'dev-quiet-window',
+  'Dev watcher quiet window defers, not drops, a save after a rebuild',
+  await import('./cli-contracts/dev-quiet-window.test.js')
+);
+addInProcess(
   'action-host',
   'Action host: caller, origin allowlist, rebuild, onServerReady, close (AC-17..AC-26)',
   await import('./cli-contracts/action-host.test.js')
