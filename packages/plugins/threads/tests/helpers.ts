@@ -42,6 +42,8 @@ export function makeCtx(root: string, extra: Record<string, unknown> = {}): any 
   const ctx: any = {
     projectRoot: root,
     config: {},
+    mode: 'dev',
+    caller: { transport: 'local', headers: {}, origin: null, remoteAddress: null, connectionId: 'local', connectedAt: 0 },
     broadcast: () => {},
     source: { _modified: false },
     async readFile(relativePath: string) {

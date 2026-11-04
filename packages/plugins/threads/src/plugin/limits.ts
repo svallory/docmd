@@ -6,7 +6,7 @@
 import type { ActionContext } from '@docmd/api';
 import { ThreadsError } from './errors.js';
 import { getOptions } from './config.js';
-import { resolveCaller } from './identity.js';
+import type { Caller } from '../types.js';
 
 /** Reject a body longer than `maxCommentChars` characters (code points). Emptiness is `requireFields`' concern. */
 export function checkBody(body: string, opts: { maxCommentChars: number }): void {
@@ -52,9 +52,9 @@ const limiters = new Map<string, { max: number; limiter: RateLimiter }>();
 export function guardWrite(
   ctx: ActionContext,
   payload: Record<string, any>,
+  caller: Caller,
   opts: { rate: boolean; now: () => number },
 ): void {
-  const caller = resolveCaller(ctx, payload);
   const { limits } = getOptions(ctx);
   checkBody(String(payload.body ?? ''), limits);
   if (!opts.rate) return;

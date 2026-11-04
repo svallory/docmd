@@ -4,7 +4,9 @@
  * prefix back into `{ code, text }`.
  */
 
-export type ThreadsErrorCode = 'not-found' | 'invalid' | 'config' | 'empty-review' | 'limit-chars' | 'rate-limited';
+export type ThreadsErrorCode =
+  | 'not-found' | 'invalid' | 'config' | 'empty-review' | 'limit-chars' | 'rate-limited'
+  | 'unauthenticated' | 'no-identity-source';
 
 const PREFIX = /^threads\/([a-z][a-z-]*): ([\s\S]*)$/;
 

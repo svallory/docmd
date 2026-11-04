@@ -193,7 +193,7 @@ for (const [name, run] of drafted) {
 
 test('whoami reports the payload identity and journal, or nulls without one', async () => {
   const withId = await call('threads:whoami', ALICE);
-  assert.deepEqual(withId.identity, { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' });
+  assert.deepEqual(withId.identity, { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload', isAdmin: false });
   assert.equal(withId.journal.authorKey, 'k-alice');
   assert.deepEqual(await call('threads:whoami', {}), { identity: null, journal: null, orphanedMine: 0 });
 });
