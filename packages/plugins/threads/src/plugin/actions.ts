@@ -6,6 +6,7 @@ import * as parser from './parser.js';
 import { ThreadsError } from './errors.js';
 import { getOptions } from './config.js';
 import { createDraftStore, makeOp, type DraftStore } from './drafts.js';
+import { guardWrite } from './limits.js';
 import { overlay } from './overlay.js';
 import { findCaller, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
 import { defaultSync, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
@@ -209,6 +210,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   'threads:add-thread': async (payload, ctx): Promise<Thread> => {
     requireFields('threads:add-thread', payload, ['file', 'author', 'body']);
+    guardWrite(ctx, payload, { rate: true, now: Date.now });
     await recordProfile(ctx, payload);
     const threadId = generateThreadId();
     const { view } = await transact(ctx, payload, (tx) =>
@@ -222,6 +224,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   'threads:add-comment': async (payload, ctx): Promise<Comment> => {
     requireFields('threads:add-comment', payload, ['file', 'threadId', 'author', 'body']);
+    guardWrite(ctx, payload, { rate: true, now: Date.now });
     await recordProfile(ctx, payload);
     const commentId = generateCommentId();
     const { view } = await transact(ctx, payload, (tx) => {
@@ -236,6 +239,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   'threads:edit-comment': async (payload, ctx): Promise<Comment> => {
     requireFields('threads:edit-comment', payload, ['file', 'threadId', 'commentId', 'body']);
+    guardWrite(ctx, payload, { rate: false, now: Date.now });
     const { threadId, commentId, body } = payload;
     const { view } = await transact(ctx, payload, (tx) => {
       findComment(findThread(tx.view, threadId), commentId);
