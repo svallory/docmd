@@ -5,6 +5,7 @@ import type { ActionContext } from '@docmd/api';
 import * as parser from './parser.js';
 import { ThreadsError } from './errors.js';
 import { markPattern, splitPage } from './marks.js';
+import { authorsPath, readAuthorsRaw, writeAuthors } from './authors.js';
 import { createLock, createNoGitSync, type Sync } from './lock.js';
 import type { DraftStore } from './drafts.js';
 import type { Caller, Comment, DraftOp, ManifestOp, PublishResult, ReviewManifest, ReviewSummary, Thread } from '../types.js';
@@ -345,6 +346,25 @@ export function defaultSync(ctx: ActionContext): Sync {
   return sync;
 }
 
+/** Drop a published profile from the journal, unless the caller edited it again meanwhile. */
+/** `authors.json` as the sync is told about it: relative to the project root, like a target file. */
+const profileFileOf = (ctx: ActionContext): string => path.relative(ctx.projectRoot, authorsPath(ctx));
+
+/** Set `authors.json[key]`; returns the function that puts the file back as it was. */
+async function writeProfile(ctx: ActionContext, key: string, profile: { name: string; avatarUrl: string }): Promise<() => Promise<void>> {
+  const before = await readAuthorsRaw(ctx);
+  await writeAuthors(ctx, { ...(before === null ? {} : JSON.parse(before)), [key]: profile });
+  return async () => {
+    if (before === null) await fs.promises.rm(authorsPath(ctx), { force: true });
+    else await fs.promises.writeFile(authorsPath(ctx), before);
+  };
+}
+
+const clearProfile = (store: DraftStore, key: string, profile: { name: string; avatarUrl: string }) =>
+  store.transact(key, (j) => {
+    if (j.profile && j.profile.name === profile.name && j.profile.avatarUrl === profile.avatarUrl) delete j.profile;
+  });
+
 /**
  * Write the caller's journal into the markdown files it targets, record the
  * review manifest, and reset the journal. Under the sync's lock; `apply` runs
@@ -358,7 +378,17 @@ export async function publish(
 ): Promise<PublishResult> {
   return sync.withLock(async () => {
     const journal = await store.load(caller.key);
-    if (!journal.ops.length) throw new ThreadsError('empty-review', 'there is nothing to publish');
+    if (!journal.ops.length) {
+      if (!journal.profile) throw new ThreadsError('empty-review', 'there is nothing to publish');
+      // A profile edit alone: authors.json is the whole publish, with no review or manifest.
+      const profile = journal.profile;
+      await sync.publishWithRetry(
+        async () => void (await writeProfile(ctx, caller.key, profile)),
+        { reviewId: journal.review.id, authorKey: caller.key, authorName: caller.name, files: [profileFileOf(ctx)] },
+      );
+      await clearProfile(store, caller.key, journal.profile);
+      return { reviewId: journal.review.id, skipped: [] };
+    }
     const ops = journal.ops;
     const reviewId = journal.review.id;
     const files = [...new Set(ops.map((o) => o.file))];
@@ -399,11 +429,16 @@ export async function publish(
 
         // Write everything or nothing: a failure restores the files already written.
         const written: typeof results = [];
+        let undoProfile: (() => Promise<void>) | undefined;
         try {
           for (const r of results) {
             if (r.next === r.original) continue;
             written.push(r);
             await ctx.writeFile(r.file, r.next);
+          }
+          if (journal.profile) {
+            // A header caller's profile edit lands in authors.json with the rest of the publish.
+            undoProfile = await writeProfile(ctx, caller.key, journal.profile);
           }
           const title = 'title' in input ? input.title : journal.review.title;
           const summary = 'summary' in input ? input.summary : journal.review.summary;
@@ -421,6 +456,13 @@ export async function publish(
           });
         } catch (e) {
           const stuck: string[] = [];
+          if (undoProfile) {
+            try {
+              await undoProfile();
+            } catch {
+              stuck.push(profileFileOf(ctx));
+            }
+          }
           for (const r of written.reverse()) {
             try {
               await ctx.writeFile(r.file, r.original);
@@ -438,7 +480,7 @@ export async function publish(
           throw e;
         }
       },
-      { reviewId, authorKey: caller.key, authorName: caller.name, files },
+      { reviewId, authorKey: caller.key, authorName: caller.name, files: journal.profile ? [...files, profileFileOf(ctx)] : files },
     );
 
     // Drop what was published (ops added meanwhile stay) and start a fresh review.
@@ -450,6 +492,9 @@ export async function publish(
         j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };
       });
     }
+    // Written with the files above; drop it from the journal. On the earlier-published path apply
+    // did not run, so the profile (maybe edited since) stays for the next publish.
+    if (journal.profile && earlier?.state !== 'published') await clearProfile(store, caller.key, journal.profile);
     return { reviewId, skipped };
   });
 }

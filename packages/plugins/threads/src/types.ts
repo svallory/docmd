@@ -112,6 +112,8 @@ export interface Journal {
   mode: DraftMode;
   review: { id: string; title: string | null; summary: string | null; createdAt: string; updatedAt: string };
   ops: DraftOp[];
+  /** A header caller's profile edit; written to authors.json at publish. */
+  profile?: { name: string; avatarUrl: string };
 }
 
 /** Who is making a call. */
@@ -121,6 +123,8 @@ export interface Caller {
   email: string | null;
   avatarUrl: string;
   source: 'payload' | 'header';
+  /** True iff the key is in `permissions.admins`; always false for payload callers. */
+  isAdmin: boolean;
 }
 
 export interface WhoAmI {
@@ -160,6 +164,7 @@ export interface ReviewSummary {
   ops: Array<{ file: string; threadId: string; quote: string | null; pageTitle: string | null }>;
 }
 
+/** A publish of a profile edit alone returns the open review's id; no manifest exists for it. */
 export interface PublishResult {
   reviewId: string;
   skipped: Array<{ opId: string; reason: string }>;
