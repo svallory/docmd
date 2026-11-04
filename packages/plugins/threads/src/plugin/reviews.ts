@@ -432,6 +432,7 @@ export async function publish(
             throw new ThreadsError(
               'invalid',
               `publish failed (${e instanceof Error ? e.message : String(e)}) and these files could not be restored, check them: ${stuck.join(', ')}`,
+              { cause: e },
             );
           }
           throw e;
@@ -441,17 +442,38 @@ export async function publish(
     );
 
     // Drop what was published (ops added meanwhile stay) and start a fresh review.
-    // After an earlier publish only what its manifest recorded is done; ops drafted since stay.
-    const published = new Set(
-      earlier?.state === 'published'
-        ? [...earlier.ops.map((o) => o.opId), ...earlier.skipped.map((x) => x.opId)]
-        : ops.map((o) => o.opId),
-    );
-    await store.transact(caller.key, (j, at) => {
-      j.ops = j.ops.filter((o) => !published.has(o.opId));
-      j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };
-    });
+    if (earlier?.state === 'published') await finishEarlierPublish(ctx, store, caller.key, newId);
+    else {
+      const published = new Set(ops.map((o) => o.opId));
+      await store.transact(caller.key, (j, at) => {
+        j.ops = j.ops.filter((o) => !published.has(o.opId));
+        j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };
+      });
+    }
     return { reviewId, skipped };
+  });
+}
+
+/**
+ * Finish a publish whose files and manifest were written but whose journal reset failed:
+ * drop the ops the manifest recorded (applied and skipped) and rotate the review id, so
+ * ops still in the journal stand for what is really pending and later edits of the
+ * published comments become real edit/delete ops. A no-op when the journal's review has no
+ * published manifest.
+ */
+export async function finishEarlierPublish(
+  ctx: ActionContext,
+  store: DraftStore,
+  key: string,
+  newId: (prefix: string) => string = (prefix) => prefix + crypto.randomBytes(4).toString('hex'),
+): Promise<void> {
+  const manifest = await readManifest(ctx, (await store.load(key)).review.id);
+  if (manifest?.state !== 'published') return;
+  const done = new Set([...manifest.ops.map((o) => o.opId), ...manifest.skipped.map((x) => x.opId)]);
+  await store.transact(key, (j, at) => {
+    if (j.review.id !== manifest.id) return;
+    j.ops = j.ops.filter((o) => !done.has(o.opId));
+    j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };
   });
 }
 
