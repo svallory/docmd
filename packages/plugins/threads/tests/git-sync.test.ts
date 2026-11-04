@@ -67,13 +67,15 @@ test('assertRuntime: the token is required only when git is configured', () => {
 
 test('onServerReady rejects without the token and resolves with it or without git', async () => {
   const log_ = mock.method(console, 'log', () => {});
-  const handle = (threads: unknown): any => ({ mode: 'serve', projectRoot: '/x', config: { plugins: { threads } } });
+  const handle = (threads: unknown): any => ({ mode: 'serve', projectRoot: '/x', config: { plugins: { threads } }, rebuild: async () => {}, onShutdown: (fn: () => void) => stops.push(fn) });
+  const stops: Array<() => void> = [];
   try {
     delete process.env.DOCMD_THREADS_GIT_TOKEN;
     await assert.rejects(onServerReady(handle({ git: { branch: BRANCH } })), /^ThreadsError: threads\/config: .*DOCMD_THREADS_GIT_TOKEN/);
     await onServerReady(handle(true)); // git absent: the variable is not needed
     process.env.DOCMD_THREADS_GIT_TOKEN = SENTINEL;
     await onServerReady(handle({ git: { branch: BRANCH } }));
+    stops.forEach((stop) => stop()); // the pull loop's real interval
     assert.ok(log_.mock.calls.every((c) => !String(c.arguments[0]).includes(SENTINEL)));
   } finally {
     log_.mock.restore();
