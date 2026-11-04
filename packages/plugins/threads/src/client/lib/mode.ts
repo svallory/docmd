@@ -76,6 +76,8 @@ export interface WidgetStateInput {
   pendingCount: number | null;
   orphanedMine: number;
   publishing: boolean;
+  /** The timer has a fire scheduled (`remainingMs() !== null`). */
+  armed: boolean;
   error?: string | null;
   /** Translate a key; defaults to the English strings below. */
   t?: (key: string) => string;
@@ -114,7 +116,7 @@ export function widgetState(input: WidgetStateInput): WidgetState {
     variant,
     showPlayPause: input.autoPublish,
     publishDisabled: input.publishing || pendingCount < 1,
-    ringRunning: input.autoPublish && input.mode === 'auto' && !input.publishing && pendingCount >= 1,
+    ringRunning: input.autoPublish && input.mode === 'auto' && input.armed && !input.publishing && pendingCount >= 1,
     label: !known ? '…' : tr(pendingCount === 1 ? 'unpublishedCountOne' : 'unpublishedCount').replace('{n}', String(pendingCount)),
     orphanLine: orphanedMine > 0
       ? tr(orphanedMine === 1 ? 'lostAnchor' : 'lostAnchorPlural').replace('{n}', String(orphanedMine))
