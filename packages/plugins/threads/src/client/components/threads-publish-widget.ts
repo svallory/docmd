@@ -186,6 +186,9 @@ export class ThreadsPublishWidget extends LitElement {
       this.error = err instanceof api.ThreadsClientError ? err.text : t('publishFailed');
     } finally {
       this.publishing = false;
+      // The ring was removed while publishing and will be rebuilt: re-measure its offset against the live timer.
+      this.ringKey = null;
+      this.syncTimer();
     }
   }
 

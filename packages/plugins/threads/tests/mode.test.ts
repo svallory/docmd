@@ -81,10 +81,13 @@ const T0 = 1_000_000;
 
 test('timer: fires once at updatedAt + seconds', () => {
   const r = rig();
-  assert.equal(r.timer.totalMs(), 60_000);
   r.timer.update({ mode: 'auto', updatedAt: T0, pendingCount: 1 });
   assert.equal(r.timer.remainingMs(), 60_000);
-  r.advance(59_999);
+  // The elapsed time the ring offset is derived from.
+  assert.equal(r.timer.totalMs() - r.timer.remainingMs()!, 0);
+  r.advance(10_000);
+  assert.equal(r.timer.totalMs() - r.timer.remainingMs()!, 10_000);
+  r.advance(49_999);
   assert.equal(r.fired(), 0);
   r.advance(1);
   assert.equal(r.fired(), 1);
