@@ -10,7 +10,8 @@ import { overlay } from './overlay.js';
 import { countOrphanedBy, fsOrphanScanDeps, markOrphans } from './orphans.js';
 import { readAuthors, writeAuthors } from './authors.js';
 import { findCaller, headerProfile, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
-import { getSync, discard, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
+import { assertCan } from './permissions.js';
+import { getSync, discard, finishEarlierPublish, listManifests, readManifest, parseReviewFields, publish, summarize } from './reviews.js';
 import type { AuthorsMap, Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
 
 /**
@@ -150,6 +151,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   'threads:upsert-author': async (payload, ctx): Promise<{ ok: boolean }> => {
     const caller = await begin(ctx, payload, 'threads:upsert-author', getOptions(ctx).identityHeader ? ['name'] : ['authorKey', 'name']);
+    assertCan(caller, 'upsert-author', { authorKey: payload.authorKey }, getOptions(ctx).permissions);
     if (caller.source === 'header') {
       // The key is the trusted header; the profile waits in the journal until publish.
       await getStore(ctx).transact(caller.key, (j) => {
@@ -232,7 +234,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     guardWrite(ctx, payload, caller, { rate: false, now: () => Date.now() });
     const { threadId, commentId, body } = payload;
     const { view } = await transact(ctx, caller, payload, (tx) => {
-      findComment(findThread(tx.view, threadId), commentId);
+      const target = findComment(findThread(tx.view, threadId), commentId);
+      assertCan(caller, 'edit-comment', { authorKey: target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
       const drafted = draftedCommentOp(tx, commentId);
       if (drafted) Object.assign(drafted, { body });
       else push(tx, { kind: 'edit-comment', file: tx.file, threadId, commentId, body });
@@ -244,7 +247,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const caller = await begin(ctx, payload, 'threads:delete-comment', ['file', 'threadId', 'commentId']);
     const { threadId, commentId } = payload;
     await transact(ctx, caller, payload, (tx) => {
-      findComment(findThread(tx.view, threadId), commentId);
+      const target = findComment(findThread(tx.view, threadId), commentId);
+      assertCan(caller, 'delete-comment', { authorKey: target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
       const drafted = draftedCommentOp(tx, commentId);
       if (drafted?.kind === 'add-thread') {
         // The first comment of a drafted thread: the thread goes with it.
@@ -261,7 +265,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const caller = await begin(ctx, payload, 'threads:delete-thread', ['file', 'threadId']);
     const { threadId } = payload;
     await transact(ctx, caller, payload, (tx) => {
-      findThread(tx.view, threadId);
+      const thread = findThread(tx.view, threadId);
+      assertCan(caller, 'delete-thread', { authorKeys: thread.comments.filter((c) => !c.draft).map((c) => c.authorKey) }, getOptions(ctx).permissions);
       const drafted = draftedThreadOp(tx, threadId);
       drop(tx, opsOnThread(tx, threadId));
       if (!drafted) push(tx, { kind: 'delete-thread', file: tx.file, threadId });
@@ -273,7 +278,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     const caller = await begin(ctx, payload, 'threads:resolve-thread', ['file', 'threadId']);
     const { threadId } = payload;
     const { view } = await transact(ctx, caller, payload, (tx) => {
-      findThread(tx.view, threadId);
+      const thread = findThread(tx.view, threadId);
+      assertCan(caller, 'resolve-thread', { threadAuthor: thread.comments[0]?.authorKey, drafted: thread.draft }, getOptions(ctx).permissions);
       // A drafted thread has no resolved field to flip: a second toggle cancels the first.
       const pending = draftedThreadOp(tx, threadId)
         ? opsOnThread(tx, threadId).find((o) => o.kind === 'resolve-thread')
@@ -315,6 +321,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
   /** Take a review back: reverse a published one from its manifest, or empty the caller's open one. */
   'threads:discard-review': async (payload, ctx): Promise<{ discarded: true }> => {
     const caller = await begin(ctx, payload, 'threads:discard-review', ['reviewId']);
+    assertCan(caller, 'discard-review', { reviewAuthor: (await readManifest(ctx, payload.reviewId))?.authorKey ?? caller.key }, getOptions(ctx).permissions);
     return discard(caller, ctx, payload.reviewId, { store: getStore(ctx), sync: getSync(ctx) });
   },
 };
