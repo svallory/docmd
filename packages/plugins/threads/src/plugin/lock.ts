@@ -44,7 +44,7 @@ export interface Applied {
  */
 export interface Sync {
   withLock<T>(fn: () => Promise<T>): Promise<T>;
-  publishWithRetry(apply: () => Promise<void | Applied>, meta: PublishMeta): Promise<void>;
+  publishWithRetry(apply: () => Promise<Applied>, meta: PublishMeta): Promise<void>;
 }
 
 /** The `docmd dev` path: no git process, `apply` runs once. */
