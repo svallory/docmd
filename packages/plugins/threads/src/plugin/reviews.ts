@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ActionContext } from '@docmd/api';
 import * as parser from './parser.js';
 import { ThreadsError } from './errors.js';
+import { markPattern, splitPage } from './marks.js';
 import { createLock, createNoGitSync, type Sync } from './lock.js';
 import type { DraftStore } from './drafts.js';
 import type { Caller, Comment, DraftOp, ManifestOp, PublishResult, ReviewManifest, ReviewSummary, Thread } from '../types.js';
@@ -12,7 +13,6 @@ const TITLE_MAX = 120;
 const SUMMARY_MAX = 2000;
 
 const day = (iso: string) => iso.slice(0, 10);
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 let tmpSeq = 0;
 
 // ---------------------------------------------------------------------------
@@ -91,11 +91,9 @@ const unsafeQuote = (quote: string) => quote.split('\n').some((l) => l.trim() ==
  * No free occurrence: the content is returned unchanged (the anchor is still recorded).
  */
 function wrapQuote(content: string, quote: string, threadId: string): string {
-  const cut = content.indexOf('\n::: threads');
-  const body = cut >= 0 ? content.slice(0, cut) : content;
-  const rest = cut >= 0 ? content.slice(cut) : '';
+  const { body, rest } = splitPage(content);
   const from = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(body)?.[0].length ?? 0;
-  const spans = [...body.matchAll(/==((?:(?!==).)+)==\{[^}]+\}/g)].map((m) => [m.index!, m.index! + m[0].length]);
+  const spans = [...body.matchAll(markPattern(undefined, 'g'))].map((m) => [m.index!, m.index! + m[0].length]);
   let at = body.indexOf(quote, from);
   while (at >= 0 && spans.some(([a, b]) => at < b && at + quote.length > a)) at = body.indexOf(quote, at + 1);
   if (at < 0) return content;
@@ -103,7 +101,7 @@ function wrapQuote(content: string, quote: string, threadId: string): string {
 }
 
 const unwrapThread = (content: string, threadId: string) =>
-  content.replace(new RegExp(`==((?:(?!==).)+)==\\{${escapeRe(threadId)}\\}`, 'g'), '$1');
+  content.replace(markPattern(threadId, 'g'), '$1');
 
 /**
  * Turn the toggle ops of one file into desired end states, from the file as first read:

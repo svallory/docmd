@@ -24,6 +24,7 @@ const cases: Array<[string, string, Thread, boolean]> = [
   ['mark absent', 'Some plain text here.\n' + block(['t-1']), thread('t-1', 'quoted text'), true],
   ['mark of another thread only', 'Some ==quoted text=={t-2} here.\n' + block(['t-1']), thread('t-1', 'quoted text'), true],
   ['id appears only inside the threads block', 'Plain.\n' + block(['t-1']).replace('hi', 'see ==x=={t-1}'), thread('t-1', 'quoted text'), true],
+  ['multi-line quote, mark present', 'A ==line one\nline two=={t-1} b\n' + block(['t-1']), thread('t-1', 'line one\nline two'), false],
   ['no anchor (legacy / general)', 'Plain.\n' + block(['t-1']), thread('t-1'), false],
   ['no threads block at all', 'Plain.\n', thread('t-1', 'quoted text'), true],
   ['id with regex characters', 'A ==q=={t.1} b\n' + block(['t.1']), thread('t.1', 'q'), false],
@@ -72,6 +73,17 @@ test('countOrphanedBy is 0 for a caller with no threads', async () => {
   assert.equal(await countOrphanedBy(ROOT, 'k-nobody', deps), 0);
 });
 
+test('countOrphanedBy skips a file that vanished between listing and reading', async () => {
+  const d = {
+    readFile: async (f: string) => {
+      if (f === '/docs/sub/b.md') throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return FILES[f];
+    },
+    listMarkdown: async () => Object.keys(FILES),
+  };
+  assert.equal(await countOrphanedBy(ROOT, 'k-alice', d), 1);
+});
+
 test('countOrphanedBy counts by the first comment, not a later reply', async () => {
   const files: Record<string, string> = {
     '/docs/r.md': orphan('t-r', 'k-bob').replace('  :::\n:::\n', '    ::: comment c-2 "A" "2026-03-02" reply-to c-t-r by k-alice\n      re\n    :::\n  :::\n:::\n'),
@@ -94,29 +106,37 @@ const BOB = { author: 'Bob', authorKey: 'k-bob' };
 const call = (name: string, payload: Record<string, unknown>) =>
   (actions as Record<string, any>)[name](payload, makeCtx(project.root, { config: { src: 'docs' } }));
 
-test('get-threads flags a published thread once its quote is edited out; whoami counts it for the starter only; drafts stay overlaid', async () => {
-  const file = project.file;
-  const abs = path.join(project.root, file);
-  const quote = 'Developer Checklist';
-  assert.ok(fs.readFileSync(abs, 'utf8').includes(quote));
+const ANCHOR = (quote: string) => ({ quote, prefix: null, suffix: null, selector: null, offset: null, blockText: null });
+const QUOTE = 'Developer Checklist';
 
-  const added = await call('threads:add-thread', { file, ...ALICE, body: 'Orphan me', anchor: { quote, prefix: null, suffix: null, selector: null, offset: null, blockText: null } });
+/** Alice publishes a thread on QUOTE, then the quote is edited out of the page. */
+async function publishThenOrphan(): Promise<string> {
+  project.reset();
+  fs.rmSync(path.join(project.root, 'docs', '.threads'), { recursive: true, force: true });
+  const abs = path.join(project.root, project.file);
+  const added = await call('threads:add-thread', { file: project.file, ...ALICE, body: 'Orphan me', anchor: ANCHOR(QUOTE) });
   await call('threads:publish-review', { ...ALICE });
-  assert.match(fs.readFileSync(abs, 'utf8'), new RegExp(`==${quote}==\\{${added.id}\\}`));
+  const published = fs.readFileSync(abs, 'utf8');
+  assert.ok(published.includes(`==${QUOTE}=={${added.id}}`));
+  fs.writeFileSync(abs, published.replace(`==${QUOTE}=={${added.id}}`, 'something else'));
+  return added.id;
+}
 
-  const before = (await call('threads:get-threads', { file, ...ALICE })).find((t: Thread) => t.id === added.id);
-  assert.equal(before.orphaned, undefined);
-  assert.equal((await call('threads:whoami', ALICE)).orphanedMine, 0);
+test('get-threads flags the published thread once its quote is edited out, keeps the quote and overlays drafts', async () => {
+  const file = project.file;
+  const id = await publishThenOrphan();
+  await call('threads:add-comment', { file, ...ALICE, threadId: id, body: 'Draft reply' });
 
-  fs.writeFileSync(abs, fs.readFileSync(abs, 'utf8').replace(`==${quote}=={${added.id}}`, 'something else'));
-  await call('threads:add-comment', { file, ...ALICE, threadId: added.id, body: 'Draft reply' });
-
-  const threads: Thread[] = await call('threads:get-threads', { file, ...ALICE });
-  const t = threads.find((x) => x.id === added.id)!;
+  const t = (await call('threads:get-threads', { file, ...ALICE })).find((x: Thread) => x.id === id);
   assert.equal(t.orphaned, true);
-  assert.equal(t.anchor?.quote, quote);
-  assert.ok(t.comments.some((c) => c.draft && c.body === 'Draft reply'), 'drafts overlaid');
+  assert.equal(t.anchor.quote, QUOTE);
+  assert.ok(t.comments.some((c: any) => c.draft && c.body === 'Draft reply'), 'drafts overlaid');
+});
 
+test('whoami counts the starter\'s orphan, not another caller\'s, and not a drafted thread', async () => {
+  const file = project.file;
+  await publishThenOrphan();
+  await call('threads:add-thread', { file, ...ALICE, body: 'Still a draft', anchor: ANCHOR('Component Verification') });
   assert.equal((await call('threads:whoami', ALICE)).orphanedMine, 1);
   assert.equal((await call('threads:whoami', BOB)).orphanedMine, 0);
 });

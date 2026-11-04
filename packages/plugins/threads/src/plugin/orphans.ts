@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as parser from './parser.js';
+import { markPattern, splitPage } from './marks.js';
 import type { Thread } from '../types.js';
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SKIPPED_DIRS = new Set(['.threads', 'node_modules']);
+const BATCH = 32;
 
 /**
  * Flag every thread whose anchor quote has lost its `==...=={id}` mark in the page body
@@ -12,12 +13,10 @@ const SKIPPED_DIRS = new Set(['.threads', 'node_modules']);
  * Pure: returns copies, the input is untouched.
  */
 export function markOrphans(content: string, threads: Thread[]): Thread[] {
-  const cut = content.indexOf('\n::: threads');
-  const body = cut >= 0 ? content.slice(0, cut) : content;
+  const { body } = splitPage(content);
   return threads.map((t) => {
     if (!t.anchor?.quote) return t;
-    const mark = new RegExp(`==(?:(?!==).)+==\\{${escapeRe(t.id)}\\}`);
-    return mark.test(body) ? t : { ...t, orphaned: true };
+    return markPattern(t.id).test(body) ? t : { ...t, orphaned: true };
   });
 }
 
@@ -61,14 +60,23 @@ export async function countOrphanedBy(docsRoot: string, authorKey: string, deps:
   const files = (await deps.listMarkdown(docsRoot)).filter(
     (f) => !path.relative(docsRoot, f).split(/[\\/]/).some((seg) => SKIPPED_DIRS.has(seg)),
   );
-  const counts = await Promise.all(
-    files.map(async (file) => {
-      const content = await deps.readFile(file);
-      if (!content.includes('::: threads')) return 0;
-      return markOrphans(content, parser.parseThreadsFromContent(content)).filter(
-        (t) => t.orphaned && t.comments[0]?.authorKey === authorKey,
-      ).length;
-    }),
-  );
-  return counts.reduce((a, b) => a + b, 0);
+  const countIn = async (file: string): Promise<number> => {
+    let content: string;
+    try {
+      content = await deps.readFile(file);
+    } catch (e: any) {
+      // Gone since the listing (publish, pull, save-via-rename): nothing to count.
+      if (e?.code === 'ENOENT') return 0;
+      throw e;
+    }
+    if (!content.includes('::: threads')) return 0;
+    return markOrphans(content, parser.parseThreadsFromContent(content)).filter(
+      (t) => t.orphaned && t.comments[0]?.authorKey === authorKey,
+    ).length;
+  };
+  let total = 0;
+  for (let i = 0; i < files.length; i += BATCH) {
+    total += (await Promise.all(files.slice(i, i + BATCH).map(countIn))).reduce((a, b) => a + b, 0);
+  }
+  return total;
 }
