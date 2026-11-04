@@ -617,9 +617,9 @@ export async function publish(
         j.review = { id: newId('r-'), title: null, summary: null, createdAt: at, updatedAt: at };
       });
     }
-    // Written with the files above; drop it from the journal. On the earlier-published path apply
+    // Written with the files above; drop it from the journal. On the earlier-manifest path apply
     // did not run, so the profile (maybe edited since) stays for the next publish.
-    if (journal.profile && earlier?.state !== 'published') await clearProfile(store, caller.key, journal.profile);
+    if (journal.profile && !earlier) await clearProfile(store, caller.key, journal.profile);
     return { reviewId, skipped };
   });
 }

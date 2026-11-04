@@ -75,6 +75,10 @@ test('AC-1: every write rejects unauthenticated without the header, and changes 
   assert.deepEqual(tree(project.root), before);
 });
 
+test('discard-review resolves identity before it validates the payload', async () => {
+  await assert.rejects(run('discard-review', {}, headerCtx({})), (e: Error) => e.message.startsWith('threads/unauthenticated'));
+});
+
 test('AC-5: serve without a header configured rejects writes, reads succeed', async () => {
   const serve = { mode: 'serve', config: { src: 'docs' } };
   const before = tree(project.root);
