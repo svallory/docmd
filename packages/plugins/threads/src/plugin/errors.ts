@@ -11,8 +11,8 @@ const PREFIX = /^threads\/([a-z][a-z-]*): ([\s\S]*)$/;
 export class ThreadsError extends Error {
   readonly code: ThreadsErrorCode;
 
-  constructor(code: ThreadsErrorCode, text: string) {
-    super(`threads/${code}: ${text}`);
+  constructor(code: ThreadsErrorCode, text: string, options?: { cause?: unknown }) {
+    super(`threads/${code}: ${text}`, options);
     this.name = 'ThreadsError';
     this.code = code;
   }

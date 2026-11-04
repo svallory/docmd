@@ -441,3 +441,43 @@ test('a failed restore names the files left inconsistent', async () => {
   });
   await assert.rejects(publish(ALICE, broken, {}, { store: store(), sync: createNoGitSync(createLock()) }), /could not be restored.*docs\/index\.md/);
 });
+
+test('edits and deletes made after a failed journal reset reach the markdown', async () => {
+  await fill('k-alice', journalOps().slice(0, 3));
+  const real = store();
+  let fail = true;
+  const flaky = {
+    ...real,
+    transact: (key: string, fn: Parameters<typeof real.transact>[1]) => {
+      if (fail) { fail = false; return Promise.reject(new Error('journal write failed')); }
+      return real.transact(key, fn);
+    },
+  };
+  const deps = { store: flaky, sync: createNoGitSync(createLock()) };
+  await assert.rejects(publish(ALICE, ctx(), {}, deps), /journal write failed/);
+
+  // c-rep and c-oth are in the markdown now, but the journal still lists them as drafts
+  const who = { author: 'Alice', authorKey: 'k-alice' };
+  await actions['threads:edit-comment']({ file: FILE, threadId: 't-thread2', commentId: 'c-rep', body: 'Edited after', ...who }, ctx());
+  await actions['threads:delete-comment']({ file: OTHER, threadId: 't-oth', commentId: 'c-oth', ...who }, ctx());
+  assert.deepEqual((await real.load('k-alice')).ops.map((o) => o.kind), ['edit-comment', 'delete-comment'], 'real ops, not edits of drafts');
+
+  await publish(ALICE, ctx(), {}, deps);
+  const reply = parser.parseThreadsFromContent(read(FILE)).find((t) => t.id === 't-thread2')!.comments.find((c) => c.id === 'c-rep')!;
+  assert.equal(reply.body, 'Edited after');
+  assert.deepEqual(parser.parseThreadsFromContent(read(OTHER)).find((t) => t.id === 't-oth')!.comments, []);
+});
+
+test('a retried apply reuses the first read\'s toggle targets', async () => {
+  await fill('k-alice', [
+    { kind: 'resolve-thread', file: FILE, threadId: 't-thread2' },
+    { kind: 'toggle-reaction', file: FILE, threadId: 't-thread2', commentId: 'c2-1', emoji: '🎉' },
+  ]);
+  const lock = createLock();
+  // a Sync that retries without restoring the files: apply runs twice over the first run's output
+  const sync: Sync = { withLock: (fn) => lock.withLock(fn), publishWithRetry: async (apply) => { await apply(); await apply(); } };
+  await publish(ALICE, ctx(), {}, { store: store(), sync });
+  const t2 = parser.parseThreadsFromContent(read(FILE)).find((t) => t.id === 't-thread2')!;
+  assert.equal(t2.resolved, true);
+  assert.deepEqual(t2.comments[0].reactions, [{ emoji: '🎉', authors: ['Alice'] }]);
+});

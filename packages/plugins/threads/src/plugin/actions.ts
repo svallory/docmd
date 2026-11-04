@@ -8,7 +8,7 @@ import { getOptions } from './config.js';
 import { createDraftStore, makeOp, type DraftStore } from './drafts.js';
 import { overlay } from './overlay.js';
 import { findCaller, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
-import { defaultSync, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
+import { defaultSync, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
 import type { Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
 
 interface AuthorsMap {
@@ -152,6 +152,7 @@ interface Outcome {
 async function transact(ctx: ActionContext, payload: any, fn: (tx: Tx, caller: Caller) => void): Promise<Outcome> {
   const caller = resolveCaller(ctx, payload);
   const store = getStore(ctx);
+  await finishEarlierPublish(ctx, store, caller.key);
   const file: string = payload.file;
   const published = parser.parseThreadsFromContent(await ctx.readFile(file));
   const who = { key: caller.key, name: caller.name };
