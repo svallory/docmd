@@ -11,7 +11,7 @@
 
 import http from 'node:http';
 import { setup, writeFile, runTestFile } from '../shared.js';
-import { freePort, request, spawnServe, waitForHealthz, stopServe } from '../_lib/serve-harness.js';
+import { freePort, request, spawnServe, waitForHealthz, stopServe, exitWithin } from '../_lib/serve-harness.js';
 import { createMcpHandler } from '../../packages/core/dist/mcp/handler.js';
 import { createMcpHttpHandler } from '../../packages/core/dist/mcp/http.js';
 
@@ -148,8 +148,8 @@ export const test = runTestFile({
         title: 'T', out: 'site', url: 'https://example.test', serve: { mcp: { enabled: true } },
       }));
       const refused = spawnServe(wired, ['--config', 'other.config.json', '--port', String(await freePort())]);
-      const exit = await refused.exited;
-      assert(exit.code !== 0 && /serve\.mcp requires the default/.test(refused.output.text), 'serve: mcp enabled with --config refuses to start');
+      const exit = await exitWithin(refused, 15000);
+      assert(!exit.timedOut && exit.code !== 0 && /serve\.mcp requires the default/.test(refused.output.text), 'serve: mcp enabled with --config refuses to start');
     }
   }
 });
