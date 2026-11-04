@@ -104,7 +104,7 @@ function wrapQuote(content: string, quote: string, threadId: string): string {
 }
 
 /** Turn a thread's `==text=={id}` highlight back into plain text (the one definition; delete-thread and discard use it). */
-export const unwrapThread = (content: string, threadId: string) =>
+const unwrapThread = (content: string, threadId: string) =>
   content.replace(markPattern(threadId, 'g'), '$1');
 
 /**
@@ -268,7 +268,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
   return { content: parser.replaceThreadsBlock(text, threads), applied, skipped };
 }
 
-export interface ReverseResult {
+interface ReverseResult {
   content: string;
   skipped: Array<{ opId: string; reason: string }>;
 }
