@@ -9,6 +9,7 @@ import { initThemeBridge } from '../lib/theme';
 import { t } from '../lib/i18n';
 import { createSvgElement, getThreadSvg } from '../lib/icons';
 import { partitionThreads } from '../lib/reviews-view';
+import { whenLive } from '../lib/when-live';
 
 import './threads-popover';
 import './threads-inline-editor';
@@ -40,6 +41,7 @@ export class ThreadsApp extends LitElement {
   private deleteTarget: { type: 'thread' | 'comment'; id: string; threadId?: string } | null = null;
   private inlineEditorEl: HTMLElement | null = null;
   private publishWidget: ThreadsPublishWidget | null = null;
+  private cancelLiveWait: (() => void) | null = null;
   private panelTab: 'threads' | 'reviews' = 'threads';
   private deepLinkDone = false;
 
@@ -54,6 +56,8 @@ export class ThreadsApp extends LitElement {
     document.removeEventListener('mousedown', this.handleOutsidePopoverClick);
     document.removeEventListener('docmd:page-mounted', this.handlePageMounted as EventListener);
     window.removeEventListener('hashchange', this.handleHashChange);
+    this.cancelLiveWait?.();
+    this.cancelLiveWait = null;
     this.publishWidget?.remove();
     this.publishWidget = null;
   }
@@ -364,10 +368,15 @@ export class ThreadsApp extends LitElement {
 
   /** The publish widget exists only against a live server. */
   private mountPublishWidget(): void {
-    if (this.publishWidget || typeof docmd === 'undefined' || !docmd.isLive?.()) return;
-    const el = document.createElement('threads-publish-widget') as ThreadsPublishWidget;
-    document.body.appendChild(el);
-    this.publishWidget = el;
+    if (this.publishWidget || this.cancelLiveWait || typeof docmd === 'undefined' || !docmd.isLive) return;
+    // The socket may still be connecting here: mount when it goes live, once.
+    this.cancelLiveWait = whenLive(() => docmd.isLive(), () => {
+      this.cancelLiveWait = null;
+      if (this.publishWidget || !this.isConnected) return;
+      const el = document.createElement('threads-publish-widget') as ThreadsPublishWidget;
+      document.body.appendChild(el);
+      this.publishWidget = el;
+    });
   }
 
   // Color palette for highlights - cycles through these
