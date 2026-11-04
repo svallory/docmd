@@ -73,7 +73,7 @@ const forbidden = (p: Promise<unknown>) => assert.rejects(p, /^ThreadsError: thr
 const anchor = { quote: 'x', prefix: null, suffix: null, selector: null, offset: null, blockText: null };
 
 // alice's published thread: two comments by her (the second is a reply), in one published review
-let tA: string, c1: string, c2: string, tF: string;
+let tA: string, c1: string, c2: string, tF: string, tH: string;
 before(async () => {
   project = tempProject();
   page = project.file;
@@ -88,6 +88,8 @@ before(async () => {
   await call('publish-review', 'alice');
   await call('add-comment', 'bob', { threadId: tF, body: 'flat reply' });
   await call('publish-review', 'bob');
+  tH = (await call('add-thread', 'alice', { body: 'solo', anchor })).id; // alice's, no replies from anyone else
+  await call('publish-review', 'alice');
   await call('add-thread', 'alice', { body: 'to discard', anchor });
   reviewId = (await call('whoami', 'alice')).journal.review.id;
   await call('publish-review', 'alice');
@@ -115,6 +117,12 @@ test('delete-comment on the opening comment of a thread with replies: admin only
   await forbidden(call('delete-comment', 'alice', { threadId: tF, commentId: opener }));
   await call('delete-comment', 'root', { threadId: tF, commentId: opener });
   assert.equal((await call('get-threads', 'root')).some((t: any) => t.id === tF), false);
+});
+
+test('delete-comment on an opener whose only reply is the author\'s own draft is allowed', async () => {
+  await call('add-comment', 'alice', { threadId: tH, body: 'my own reply' });
+  const opener = (await call('get-threads', 'alice')).find((t: any) => t.id === tH).comments[0].id;
+  await call('delete-comment', 'alice', { threadId: tH, commentId: opener });
 });
 
 test('delete-thread: forbidden unless the caller owns every comment', async () => {
