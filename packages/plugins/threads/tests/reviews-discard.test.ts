@@ -5,8 +5,8 @@ import path from 'node:path';
 import { tempProject, makeCtx, type TempProject } from './helpers.ts';
 import { actions } from '../src/plugin/actions.ts';
 import { createDraftStore, makeOp } from '../src/plugin/drafts.ts';
-import { applyOps, deriveTargets, discard, reverseOps } from '../src/plugin/reviews.ts';
-import { createLock, type Sync } from '../src/plugin/lock.ts';
+import { applyOps, deriveTargets, discard, publish, reverseOps } from '../src/plugin/reviews.ts';
+import { createLock, createNoGitSync, type Sync } from '../src/plugin/lock.ts';
 import * as parser from '../src/plugin/parser.ts';
 import type { DraftOp, NewDraftOp } from '../src/types.ts';
 
@@ -57,13 +57,6 @@ const NORMAL = parser.replaceThreadsBlock(PAGE, parser.parseThreadsFromContent(P
 const apply = (ops: DraftOp[], content = PAGE, name = 'Alice') =>
   applyOps(content, ops, { authorKey: `k-${name}`, authorName: name, reviewId: 'r-1', targets: deriveTargets(content, ops, name) });
 
-let published: ReturnType<typeof apply>;
-before(() => {
-  published = apply([
-    mk({ kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: anchor('plain target text'), body: 'New' }),
-  ]);
-});
-
 const rows: Array<{ name: string; author?: string; ops: NewDraftOp[]; changes: RegExp }> = [
   { name: 'add-comment', ops: [{ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-r', parentId: 'c-3', body: 'R' }], changes: /c-r/ },
   { name: 'edit-comment', ops: [{ kind: 'edit-comment', file: FILE, threadId: 't-1', commentId: 'c-2', body: 'Changed' }], changes: /Changed/ },
@@ -74,11 +67,19 @@ const rows: Array<{ name: string; author?: string; ops: NewDraftOp[]; changes: R
   { name: 'toggle-reaction (remove)', author: 'Bob', ops: [{ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-1', emoji: '👍' }], changes: /^(?![\s\S]*👍)/ },
 ];
 
+let published: ReturnType<typeof apply>;
+const appliedRows = new Map<string, ReturnType<typeof apply>>();
+before(() => {
+  for (const row of rows) appliedRows.set(row.name, apply(row.ops.map(mk), NORMAL, row.author ?? 'Alice'));
+  published = apply([
+    mk({ kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: anchor('plain target text'), body: 'New' }),
+  ]);
+});
+
 for (const row of rows) {
   test(`reverseOps undoes ${row.name}`, () => {
     const author = row.author ?? 'Alice';
-    const ops = row.ops.map(mk);
-    const done = apply(ops, NORMAL, author);
+    const done = appliedRows.get(row.name)!;
     assert.match(done.content, row.changes, 'the op changed the page');
     const back = reverseOps(done.content, done.applied, { authorName: author });
     assert.deepEqual(back.skipped, []);
@@ -98,6 +99,14 @@ test('reverseOps removes a started thread with a later reply by someone else and
   assert.deepEqual(back.skipped, []);
   assert.equal(back.content, NORMAL);
   assert.match(back.content, /and plain target text\./);
+});
+
+test('reverseOps re-parents later replies to a removed reply', () => {
+  const r = apply([mk({ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-r', parentId: 'c-3', body: 'R' })], NORMAL);
+  const later = apply([mk({ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-bob', parentId: 'c-r', body: 'To R' })], r.content, 'Bob');
+  const back = reverseOps(later.content, r.applied, { authorName: 'Alice' });
+  const t2 = parser.parseThreadsFromContent(back.content).find((t) => t.id === 't-2')!;
+  assert.deepEqual(t2.comments.map((c) => [c.id, c.parent_id]), [['c-3', null], ['c-bob', 'c-3']]);
 });
 
 test('reverseOps skips ops whose target is gone, reverses the rest, and a second run is the same', () => {
@@ -153,6 +162,8 @@ beforeEach(async () => {
 
 test('discarding a published review removes its threads and replies, unwraps highlights, marks the manifest and rejects a second discard', async () => {
   assert.match(read(FILE), /==parser rules here=={t-new}/);
+  // someone removed Alice's reply since the publish: skipped and recorded, the rest reversed
+  fs.writeFileSync(path.join(project.root, FILE), parser.replaceThreadsBlock(read(FILE), threadsOf(FILE).map((t) => ({ ...t, comments: t.comments.filter((c) => c.id !== 'c-rep') }))));
   const res = await actions['threads:discard-review']({ ...ALICE, reviewId: aliceReview }, ctx());
   assert.deepEqual(res, { discarded: true });
 
@@ -168,7 +179,8 @@ test('discarding a published review removes its threads and replies, unwraps hig
   const m = manifestOf(aliceReview);
   assert.equal(m.state, 'discarded');
   assert.equal(m.discardedBy, 'k-alice');
-  assert.ok(!Number.isNaN(Date.parse(m.discardedAt)));
+  assert.equal(m.discardSkipped.length, 1);
+  assert.match(m.discardSkipped[0].reason, /c-rep/);
   const list = await actions['threads:list-reviews']({}, ctx());
   assert.equal(list.find((r: any) => r.id === aliceReview).state, 'discarded');
 
@@ -196,8 +208,7 @@ test('an unknown review id is not-found', async () => {
   await assert.rejects(actions['threads:discard-review']({ ...ALICE, reviewId: 'r-nope' }, ctx()), /threads\/not-found/);
 });
 
-test('discard runs through sync.withLock and publishWithRetry, and records the injected clock and skipped ops', async () => {
-  // Bob's thread deletion since the publish makes one of Alice's ops unreachable
+test('discard runs through sync.withLock and publishWithRetry, and records the injected clock', async () => {
   const lock = createLock();
   const log: string[] = [];
   const sync: Sync = {
@@ -210,18 +221,28 @@ test('discard runs through sync.withLock and publishWithRetry, and records the i
   const m = manifestOf(aliceReview);
   assert.equal(m.discardedAt, '2031-02-03T04:05:06.000Z');
   assert.deepEqual(m.discardSkipped, []);
+});
 
-  // a second review whose target vanished: skipped and recorded, rest reversed
-  await fill('k-alice', [
-    { kind: 'add-thread', file: FILE, threadId: 't-two', commentId: 'c-two', anchor: null, body: 'Two' },
-    { kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-keep', parentId: null, body: 'Keep?' },
-  ]);
-  const second = (await actions['threads:publish-review'](ALICE, ctx())).reviewId;
-  const kept = threadsOf(FILE).filter((t) => t.id !== 't-two');
-  fs.writeFileSync(path.join(project.root, FILE), parser.replaceThreadsBlock(read(FILE), kept));
-  await actions['threads:discard-review']({ ...ALICE, reviewId: second }, ctx());
-  const m2 = manifestOf(second);
-  assert.equal(m2.discardSkipped.length, 1);
-  assert.match(m2.discardSkipped[0].reason, /t-two/);
-  assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-keep')));
+test('a discard in the window after a failed journal reset is not undone by the next publish', async () => {
+  await fill('k-alice', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-win', parentId: null, body: 'Window' }]);
+  const real = store();
+  let failed = false;
+  const flaky = { ...real, transact: (...a: Parameters<typeof real.transact>) => {
+    if (!failed) { failed = true; throw new Error('reset failed'); }
+    return real.transact(...a);
+  } };
+  const ALICE_CALLER = { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' as const };
+  await assert.rejects(publish(ALICE_CALLER, ctx(), {}, { store: flaky, sync: createNoGitSync(createLock()) }), /reset failed/);
+  const id = (await real.load('k-alice')).review.id;
+  assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'the publish wrote its file');
+
+  await actions['threads:discard-review']({ ...ALICE, reviewId: id }, ctx());
+  assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
+  const discarded = manifestOf(id);
+
+  await actions['threads:publish-review'](ALICE, ctx());
+  assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'discarded comment did not come back');
+  assert.deepEqual(manifestOf(id), discarded);
+  assert.equal(manifestOf(id).state, 'discarded');
+  assert.notEqual((await real.load('k-alice')).review.id, id, 'the journal was reset');
 });
