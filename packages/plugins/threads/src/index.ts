@@ -95,7 +95,7 @@ export function getAssets(_options?: any): any[] {
 export async function onServerReady(handle: ServerHandle): Promise<void> {
   const opts = normalizeOptions(handle.config?.plugins?.threads);
   assertRuntime(opts, process.env);
-  console.log(`[threads] ready${opts.identityHeader ? `, identity header: ${opts.identityHeader}` : ''}${opts.git ? `, git sync: ${opts.git.remote}/${opts.git.branch}` : ''}`);
+  console.log(`[threads] ready${opts.identityHeader ? `, identity header: ${opts.identityHeader}` : ''}${opts.git ? ', git sync on' : ''}`);
 }
 
 export { actions };

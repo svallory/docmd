@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFile as nodeExecFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tempProject, makeCtx } from './helpers.ts';
-import { makeRepoTrio, commitOn, log, git, BRANCH, type RepoTrio } from './helpers-git.ts';
+import { makeRepoTrio, commitOn, removeOn, log, git, BRANCH, type RepoTrio } from './helpers-git.ts';
 import { actions } from '../src/plugin/actions.ts';
 import { createDraftStore } from '../src/plugin/drafts.ts';
 import { getSync, publish } from '../src/plugin/reviews.ts';
@@ -20,15 +20,20 @@ const ANCHOR = { quote: 'Official Documentation', prefix: null, suffix: null, se
 const GIT = { branch: BRANCH, committer: { name: 'Threads Bot', email: 'bot@fixture.invalid' } };
 
 let trio: RepoTrio;
-const savedToken = process.env.DOCMD_THREADS_GIT_TOKEN;
+// Every git process in this file runs without the machine's git configuration.
+const saved = { token: process.env.DOCMD_THREADS_GIT_TOKEN, global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_SYSTEM };
+const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
 before(() => {
+  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+  process.env.GIT_CONFIG_SYSTEM = '/dev/null';
   trio = makeRepoTrio();
   process.env.DOCMD_THREADS_GIT_TOKEN = SENTINEL;
 });
 after(() => {
   trio.cleanup();
-  if (savedToken === undefined) delete process.env.DOCMD_THREADS_GIT_TOKEN;
-  else process.env.DOCMD_THREADS_GIT_TOKEN = savedToken;
+  restore('GIT_CONFIG_GLOBAL', saved.global);
+  restore('GIT_CONFIG_SYSTEM', saved.system);
+  restore('DOCMD_THREADS_GIT_TOKEN', saved.token);
 });
 beforeEach(() => trio.reset());
 
@@ -40,6 +45,8 @@ const gitCtx = () => makeCtx(trio.server, {
 });
 const draft = (ctx: any, body: string) =>
   actions['threads:add-thread']({ file: 'docs/index.md', body, anchor: ANCHOR }, ctx);
+const ANN = { key: 'ann@example.com', name: 'Ann Lee', email: 'ann@example.com', avatarUrl: '', source: 'header' as const, isAdmin: false };
+const storeOf = () => createDraftStore(path.join(trio.server, 'docs'), { now: Date.now, defaultMode: () => 'collect' });
 const head = (remote: string) => log(remote, '%H').length;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +92,7 @@ test('without git a publish spawns no process', async () => {
     const store = createDraftStore(path.join(project.root, 'docs'), { now: Date.now, defaultMode: () => 'collect' });
     await publish({ key: 'ann', name: 'Ann', email: null, avatarUrl: '', source: 'payload', isAdmin: false }, ctx, {}, { store, sync });
     assert.deepEqual(calls, []);
+    assert.equal(getSync(ctx), getSync(ctx), 'the no-git sync is the cached one');
     assert.ok(fs.readdirSync(path.join(project.root, 'docs', '.threads', 'reviews')).length === 1, 'the review was written');
   } finally {
     project.cleanup();
@@ -103,6 +111,8 @@ test('publish makes one commit authored by the commenter; the token leaks nowher
   await draft(ctx, 'Reword this link text.');
   await actions['threads:update-review']({ title: 'Link wording', summary: 'Two small fixes.' }, ctx);
 
+  const recorded: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+  const recording: ExecFile = (file, args, opts) => (recorded.push({ args, env: opts.env }), realExec(file, args, opts));
   const out: string[] = [];
   const spies = [
     mock.method(console, 'log', (...a: unknown[]) => void out.push(a.join(' '))),
@@ -112,7 +122,7 @@ test('publish makes one commit authored by the commenter; the token leaks nowher
     mock.method(process.stderr, 'write', (s: unknown) => (out.push(String(s)), true)),
   ];
   try {
-    await actions['threads:publish-review']({}, ctx);
+    await publish(ANN, ctx, {}, { store: storeOf(), sync: getSync(ctx, { execFile: recording }) });
   } finally {
     spies.forEach((s) => s.mock.restore());
   }
@@ -130,6 +140,9 @@ test('publish makes one commit authored by the commenter; the token leaks nowher
     assert.ok(!fs.readFileSync(f).includes(SENTINEL), `${f} holds the token`);
   }
   assert.ok(!out.join('\n').includes(SENTINEL));
+  // the argument channel: the token is in no argument, and the push child has it in its environment
+  assert.ok(recorded.every((r) => r.args.every((a) => !a.includes(SENTINEL))));
+  assert.equal(recorded.find((r) => r.args.includes('push'))?.env.DOCMD_THREADS_GIT_TOKEN, SENTINEL);
 });
 
 test('discard is one forward commit authored by the discarding caller', async () => {
@@ -149,6 +162,8 @@ test('a push that loses a race is retried on the fresh head; three rejections le
   const store = createDraftStore(path.join(trio.server, 'docs'), { now: Date.now, defaultMode: () => 'collect' });
   const caller = { key: 'ann@example.com', name: 'Ann Lee', email: 'ann@example.com', avatarUrl: '', source: 'header' as const, isAdmin: false };
   await draft(ctx, 'Race me.');
+  await actions['threads:add-thread']({ file: 'docs/extra.md', body: 'On a file that goes away.', anchor: ANCHOR }, ctx);
+  removeOn(trio.other, 'docs/extra.md'); // the server's clone still has it until it syncs
 
   // other pushes once, just before the server's first push
   let raced = false;
@@ -160,7 +175,10 @@ test('a push that loses a race is retried on the fresh head; three rejections le
     return realExec(file, args, opts);
   };
   await publish(caller, ctx, { title: 'Raced' }, { store, sync: getSync(ctx, { execFile: racing }) });
-  assert.deepEqual(log(trio.remote, '%an|%s'), ['seed|base', 'other|other: OTHER-WAS-HERE', 'Ann Lee|Raced [skip ci]']);
+  assert.deepEqual(log(trio.remote, '%an|%s'), ['seed|base', 'other|other: remove docs/extra.md', 'other|other: OTHER-WAS-HERE', 'Ann Lee|Raced [skip ci]']);
+  const manifestPath = git(trio.remote, 'show', '--name-only', '--format=', BRANCH).split('\n').find((f) => f.includes('/reviews/'))!;
+  const manifest = JSON.parse(git(trio.remote, 'show', `${BRANCH}:${manifestPath}`));
+  assert.deepEqual(manifest.skipped.map((x: any) => x.reason), ['file docs/extra.md not readable'], 'the op on the deleted file is skipped');
   // the second attempt applied on the fresh head
   const final = git(trio.remote, 'show', `${BRANCH}:docs/index.md`);
   assert.ok(final.includes('OTHER-WAS-HERE') && final.includes('Race me.'));
@@ -186,4 +204,32 @@ test('a push that loses a race is retried on the fresh head; three rejections le
   assert.equal(git(trio.server, 'status', '--porcelain').trim(), '');
   assert.equal(git(trio.server, 'rev-parse', 'HEAD').trim(), git(trio.server, 'rev-parse', `origin/${BRANCH}`).trim());
   assert.equal(head(trio.remote), 1);
+});
+
+test('a staging that fails leaves no manifest behind and the ops in the journal', async () => {
+  const ctx = gitCtx();
+  const store = storeOf();
+  await draft(ctx, 'Keep me.');
+  const failing: ExecFile = async (file, args, opts) => {
+    if (args.includes('add')) throw new Error(`boom in ${trio.server}`);
+    return realExec(file, args, opts);
+  };
+  const err = await publish(ANN, ctx, {}, { store, sync: getSync(ctx, { execFile: failing }) }).catch((e) => e);
+  assert.ok(err instanceof ThreadsError && err.code === 'push-failed');
+  assert.ok(!err.message.includes(trio.server), 'no server path reaches the client');
+  assert.ok(!fs.existsSync(path.join(trio.server, 'docs', '.threads', 'reviews')) || fs.readdirSync(path.join(trio.server, 'docs', '.threads', 'reviews')).length === 0);
+  assert.equal((await store.load(ANN.key)).ops.length, 1);
+  // the next publish really publishes
+  await publish(ANN, ctx, { title: 'Again' }, { store, sync: getSync(ctx, { execFile: realExec }) });
+  assert.equal(head(trio.remote), 2);
+});
+
+test('a profile that is already committed publishes as a no-op', async () => {
+  const ctx = gitCtx();
+  const store = storeOf();
+  await actions['threads:upsert-author']({ name: 'Ann Lee' }, ctx); // same as authors.json in the base commit
+  assert.ok((await store.load(ANN.key)).profile, 'the profile is journaled');
+  await publish(ANN, ctx, {}, { store, sync: getSync(ctx, { execFile: realExec }) });
+  assert.equal(head(trio.remote), 1, 'nothing to commit, nothing pushed');
+  assert.equal((await store.load(ANN.key)).profile, undefined);
 });

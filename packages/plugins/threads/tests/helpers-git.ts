@@ -49,9 +49,10 @@ export function makeRepoTrio(): RepoTrio {
   identify(seed, 'seed');
   fs.mkdirSync(path.join(seed, 'docs', '.threads'), { recursive: true });
   fs.copyFileSync(FIXTURE, path.join(seed, 'docs', 'index.md'));
+  fs.copyFileSync(FIXTURE, path.join(seed, 'docs', 'extra.md'));
   fs.writeFileSync(
     path.join(seed, 'docs', '.threads', 'authors.json'),
-    JSON.stringify({ 'ann@example.com': { name: 'Ann Lee', avatarUrl: '' } }),
+    JSON.stringify({ 'ann@example.com': { name: 'Ann Lee', avatarUrl: '' } }, null, 2) + '\n',
   );
   // Drafts are per-server state, never committed.
   fs.writeFileSync(path.join(seed, '.gitignore'), 'docs/.threads/drafts/\n');
@@ -82,6 +83,13 @@ export function commitOn(clone: string, file: string, text: string): void {
   fs.appendFileSync(path.join(clone, file), `\n${text}\n`);
   git(clone, 'add', '-A');
   git(clone, 'commit', '-m', `other: ${text}`);
+  git(clone, 'push', 'origin', `HEAD:refs/heads/${BRANCH}`);
+}
+
+/** Delete `file` in the clone, commit and push it. */
+export function removeOn(clone: string, file: string): void {
+  git(clone, 'rm', '-q', file);
+  git(clone, 'commit', '-m', `other: remove ${file}`);
   git(clone, 'push', 'origin', `HEAD:refs/heads/${BRANCH}`);
 }
 

@@ -1,5 +1,6 @@
 import { execFile as nodeExecFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs';
 import path from 'node:path';
 import type { ActionContext } from '@docmd/api';
 import { ThreadsError } from './errors.js';
@@ -15,8 +16,6 @@ export type ExecFile = (
 export interface GitSyncDeps {
   cwd: string;
   lock: Lock;
-  /** The child environment; defaults to a copy of `process.env` taken for each command. */
-  env?: NodeJS.ProcessEnv;
   execFile?: ExecFile;
 }
 
@@ -38,8 +37,9 @@ export function createGitSync(opts: NonNullable<ThreadsOptions['git']>, deps: Gi
   const run: ExecFile = deps.execFile ?? (promisify(nodeExecFile) as unknown as ExecFile);
   const { branch, remote, skipDeployMarker, committer } = opts;
 
+  // The child gets the server's environment: the credential helper reads the token from it.
   const git = (args: string[]) =>
-    run('git', args, { cwd, env: { ...(deps.env ?? process.env), GIT_TERMINAL_PROMPT: '0' } });
+    run('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   const auth = ['-c', 'credential.helper=', '-c', `credential.helper=${CREDENTIAL_HELPER}`];
 
   const syncToRemoteHead = async () => {
@@ -47,12 +47,22 @@ export function createGitSync(opts: NonNullable<ThreadsOptions['git']>, deps: Gi
     await git(['reset', '--hard', `origin/${branch}`]);
   };
 
+  /** Paths the change may have written; the ones that exist are staged, the rest (deleted upstream) are skipped. */
+  const pathsOf = (meta: PublishMeta) => [...meta.files, ...(meta.manifest ? [meta.manifest] : [])];
+
+  const stage = async (meta: PublishMeta): Promise<boolean> => {
+    const present = pathsOf(meta).filter((f) => fs.existsSync(path.join(cwd, f)));
+    if (present.length) await git(['add', '-A', '--', ...present]);
+    return git(['diff', '--cached', '--quiet']).then(() => false, () => true);
+  };
+
   const commit = async (meta: PublishMeta, applied: Applied) => {
     const marker = skipDeployMarker;
     const subject = meta.kind === 'discard'
       ? `revert(threads): discard review "${applied.title}" ${marker}`
       : `${applied.title} ${marker}`;
-    const email = meta.authorEmail || `${meta.authorName}@threads.invalid`;
+    const slug = meta.authorKey.replace(/[^a-z0-9._-]+/gi, '-');
+    const email = meta.authorEmail || `${slug}@threads.invalid`;
     await git([
       '-c', `user.name=${committer.name}`, '-c', `user.email=${committer.email}`,
       'commit', `--author=${ident(meta.authorName)} <${ident(email)}>`,
@@ -62,36 +72,52 @@ export function createGitSync(opts: NonNullable<ThreadsOptions['git']>, deps: Gi
 
   const push = () => git([...auth, 'push', remote, `HEAD:refs/heads/${branch}`]);
 
-  const resetQuietly = () => git(['reset', '--hard', `origin/${branch}`]).catch(() => undefined);
+  /** Back to origin, and drop what the change wrote that git does not know (a new manifest), so the review stays open. */
+  const resetQuietly = async (meta: PublishMeta) => {
+    await git(['reset', '--hard', `origin/${branch}`]).catch(() => undefined);
+    await git(['clean', '-fdq', '--', ...pathsOf(meta)]).catch(() => undefined);
+  };
+
+  /** A coded, path-free error for the client; the raw error stays in `cause` and the server log. */
+  const fail = (what: string, cause: unknown) => {
+    console.error(`[threads] git ${what} failed:`, cause);
+    return new ThreadsError('push-failed', `could not ${what} ${remote}/${branch}; the review is unchanged, try again`, { cause });
+  };
 
   return {
     withLock: (fn) => lock.withLock(fn),
     async publishWithRetry(apply, meta) {
       let lastError: unknown;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        await syncToRemoteHead();
-        let applied: Applied | void;
+        try {
+          await syncToRemoteHead();
+        } catch (e) {
+          await resetQuietly(meta);
+          throw fail('sync with', e);
+        }
+        let applied: Applied;
         try {
           applied = await apply();
-          await git(['add', '-A', '--', ...meta.files, ...(meta.manifest ? [meta.manifest] : [])]);
-          await commit(meta, applied ?? { title: meta.reviewId, summary: null });
         } catch (e) {
-          await resetQuietly();
+          await resetQuietly(meta);
           throw e;
+        }
+        try {
+          if (!(await stage(meta))) return; // nothing changed (e.g. the profile is already committed)
+          await commit(meta, applied);
+        } catch (e) {
+          await resetQuietly(meta);
+          throw fail('commit to', e);
         }
         try {
           await push();
           return;
         } catch (e) {
           lastError = e;
-          await resetQuietly();
+          await resetQuietly(meta);
         }
       }
-      throw new ThreadsError(
-        'push-failed',
-        `could not push to ${remote}/${branch} after ${MAX_ATTEMPTS} attempts; the review is unchanged, publish it again`,
-        { cause: lastError },
-      );
+      throw fail(`push ${MAX_ATTEMPTS} times to`, lastError);
     },
   };
 }
