@@ -105,6 +105,20 @@ export const test = runTestFile({
       const big = await post(openPort, JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'ping', params: { pad: 'x'.repeat(1024 * 1024 + 1) } }));
       assert(big.status === 413, 'body over 1 MiB: 413');
 
+      // Announced length over the limit: 413 before the body arrives (the request is left open).
+      const early = await new Promise((resolve) => {
+        const timer = setTimeout(() => { req.destroy(); resolve('hung'); }, 2000);
+        const req = http.request({ host: '127.0.0.1', port: openPort, path: '/mcp', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': 2097152 } }, (res) => {
+          clearTimeout(timer);
+          res.resume();
+          resolve(res.statusCode);
+          req.destroy();
+        });
+        req.on('error', () => {});
+        req.write('{"jsonrpc"');
+      });
+      assert(early === 413, 'Content-Length over 1 MiB: 413 without waiting for the body');
+
       const sess = await post(openPort, init, { 'Mcp-Session-Id': 'abc', 'MCP-Protocol-Version': '1999-01-01' });
       assert(sess.status === 200 && sess.json?.result?.serverInfo?.name === 'docmd-mcp-server', 'Mcp-Session-Id and MCP-Protocol-Version request headers are ignored');
 
@@ -132,12 +146,11 @@ export const test = runTestFile({
       const handle = spawnServe(wired, ['--port', String(port)]);
       try {
         await waitForHealthz(port, handle);
-        const r = await post(port, init);
-        assert(r.status === 200 && r.json?.result?.serverInfo?.name === 'docmd-mcp-server', 'serve: POST /mcp initialize is 200 with serverInfo.name');
+        const r = await post(port, init, { Origin: `http://127.0.0.1:${port}` });
+        assert(r.status === 200 && r.json?.result?.serverInfo?.name === 'docmd-mcp-server',
+          'serve: POST /mcp initialize with a configured Origin is 200 with serverInfo.name');
         const g = await request(port, '/mcp', 'GET');
         assert(g.status === 405, 'serve: GET /mcp is 405');
-        const o = await post(port, init, { Origin: `http://127.0.0.1:${port}` });
-        assert(o.status === 200, 'serve: Origin from serve.mcp.origins is 200 (the configured list is wired)');
         assert(/MCP\s*:?\s*on/.test(handle.output.text.replace(/\x1b\[[0-9;]*m/g, '')), 'serve: banner shows MCP on');
       } finally {
         await stopServe(handle);
