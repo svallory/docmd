@@ -85,7 +85,7 @@ test('AC-5: serve without a header configured rejects writes, reads succeed', as
   assert.ok(Array.isArray(await run('get-threads', { file: project.file }, serve)));
   assert.deepEqual(await run('get-authors', {}, serve), {});
   assert.deepEqual(await run('list-reviews', {}, serve), []);
-  assert.deepEqual(await run('whoami', {}, serve), { identity: null, journal: null });
+  assert.deepEqual(await run('whoami', {}, serve), { identity: null, journal: null, orphanedMine: 0 });
 });
 
 test('AC-2: the payload identity is ignored; the header names the author, authors.json names the caller', async () => {
