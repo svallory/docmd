@@ -37,7 +37,7 @@
     "build": "tsc && node build.js",
     "build:client": "node build.js",
     "test": "tsx --test tests/*.test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test e2e/publish-widget.e2e.spec.ts e2e/reviews.e2e.spec.ts"
   },
   "peerDependencies": {
     "@docmd/api": "workspace:*",

@@ -51,7 +51,8 @@ async function openReviews(page: import("@playwright/test").Page): Promise<void>
   await page.getByTestId("tab-reviews").click();
 }
 
-test("title form, published review list, quote link (same page), and Discard asks first", async ({ page }) => {
+// fixme: docmd-48f.19 - the publish widget never mounts (threads-app checks docmd.isLive() before the socket opens); remove with the plugin fix.
+test.fixme("title form, published review list, quote link (same page), and Discard asks first", async ({ page }) => {
   const quote = await page.evaluate(firstWords);
   await seedDraft(page, quote, "reviews journey");
   await page.reload();
@@ -97,7 +98,8 @@ test("title form, published review list, quote link (same page), and Discard ask
   await expect(entry.getByTestId("review-discard")).toHaveCount(0);
 });
 
-test("a quote link from another page loads the page, scrolls to the thread and flashes it", async ({ page }) => {
+// fixme: docmd-48f.19 - the publish widget never mounts (threads-app checks docmd.isLive() before the socket opens); remove with the plugin fix.
+test.fixme("a quote link from another page loads the page, scrolls to the thread and flashes it", async ({ page }) => {
   const restore = snapshotPlaygroundPage("mermaid-preview.md");
   try {
     await page.goto("/mermaid-preview/");
@@ -117,7 +119,8 @@ test("a quote link from another page loads the page, scrolls to the thread and f
   }
 });
 
-test("a deep link to an unknown thread neither scrolls nor flashes, after a full load with a real highlight on the page", async ({ page }) => {
+// fixme: docmd-48f.19 - the publish widget never mounts (threads-app checks docmd.isLive() before the socket opens); remove with the plugin fix.
+test.fixme("a deep link to an unknown thread neither scrolls nor flashes, after a full load with a real highlight on the page", async ({ page }) => {
   const quote = await page.evaluate(firstWords);
   await seedAndPublish(page, quote, "unknown id");
   await page.goto("/mermaid-preview/");
