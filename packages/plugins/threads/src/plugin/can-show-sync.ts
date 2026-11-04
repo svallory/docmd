@@ -4,4 +4,4 @@ import type { PermissionAction, PermissionTarget } from './permissions';
 
 type Assert<T extends true> = T;
 export type ShowActionIsKnown = Assert<ShowAction extends PermissionAction ? true : false>;
-export type ShowTargetIsKnown = Assert<ShowTarget extends PermissionTarget ? true : false>;
+export type ShowTargetIsKnown = Assert<keyof ShowTarget extends keyof PermissionTarget ? true : false>;
