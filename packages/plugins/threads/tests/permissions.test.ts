@@ -37,7 +37,6 @@ const rows: Row[] = [
   ['resolve author: thread author', ALICE, 'resolve-thread', { threadAuthor: 'alice' }, 'author', true],
   ['resolve author: admin', ROOT, 'resolve-thread', { threadAuthor: 'alice' }, 'author', true],
   ['resolve author: legacy thread', BOB, 'resolve-thread', {}, 'author', false],
-  ['resolve author: opening comment deleted, first reply is not the author', BOB, 'resolve-thread', { threadAuthor: null }, 'author', false],
   ['resolve author: drafted thread', BOB, 'resolve-thread', { drafted: true }, 'author', true],
   ['discard: other', BOB, 'discard-review', { reviewAuthor: 'alice' }, 'anyone', false],
   ['discard: author', ALICE, 'discard-review', { reviewAuthor: 'alice' }, 'anyone', true],
@@ -74,7 +73,7 @@ const forbidden = (p: Promise<unknown>) => assert.rejects(p, /^ThreadsError: thr
 const anchor = { quote: 'x', prefix: null, suffix: null, selector: null, offset: null, blockText: null };
 
 // alice's published thread: two comments by her (the second is a reply), in one published review
-let tA: string, c1: string, c2: string;
+let tA: string, c1: string, c2: string, tE: string;
 before(async () => {
   project = tempProject();
   page = project.file;
@@ -84,6 +83,14 @@ before(async () => {
   await call('publish-review', 'alice');
   await call('add-comment', 'bob', { threadId: tA, body: 'bob was here' });
   await call('publish-review', 'bob');
+  // tE: alice opened it and bob replied, then alice's opening comment was deleted in a published review
+  const e = await call('add-thread', 'alice', { body: 'opening', anchor });
+  tE = e.id;
+  await call('publish-review', 'alice');
+  await call('add-comment', 'bob', { threadId: tE, parentId: e.comments[0].id, body: 'reply' });
+  await call('publish-review', 'bob');
+  await call('delete-comment', 'alice', { threadId: tE, commentId: e.comments[0].id });
+  await call('publish-review', 'alice');
   await call('add-thread', 'alice', { body: 'to discard', anchor });
   reviewId = (await call('whoami', 'alice')).journal.review.id;
   await call('publish-review', 'alice');
@@ -113,6 +120,7 @@ test('delete-thread: forbidden unless the caller owns every comment', async () =
 
 test('resolve-thread with resolve: author', async () => {
   await forbidden(call('resolve-thread', 'bob', { threadId: tA }));
+  await forbidden(call('resolve-thread', 'bob', { threadId: tE })); // bob replied to a thread whose opening comment is gone
   await call('resolve-thread', 'alice', { threadId: tA });
 });
 
