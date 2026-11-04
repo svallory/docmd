@@ -30,6 +30,7 @@ after(() => {
   project.cleanup();
 });
 beforeEach(() => {
+  mock.timers.tick(60_000); // a fresh rate-limit window per test; the clock is frozen otherwise
   project.reset();
   fs.rmSync(path.join(project.root, 'docs', '.threads'), { recursive: true, force: true });
 });
