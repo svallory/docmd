@@ -9,7 +9,11 @@ function slugSegment(seg: string): string {
     .replace(/^-+|-+$/g, '') || seg;
 }
 
-/** URL path segments of a source file's page: extension dropped, `index`/`README` collapse to the folder. */
+/**
+ * URL path segments of a source file's page: extension dropped, `index`/`README` collapse to the folder.
+ * Known limit: the generator collapses README only when its folder has no index page; the client
+ * cannot see sibling files, so a README next to an index page maps to the wrong URL.
+ */
 function pageSegments(file: string): string[] {
   const segs = file.replace(/\\/g, '/').replace(/\.(md|markdown|ejs)$/i, '').split('/').filter(Boolean);
   const last = segs[segs.length - 1]?.toLowerCase();

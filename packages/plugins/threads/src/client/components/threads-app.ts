@@ -49,6 +49,7 @@ export class ThreadsApp extends LitElement {
     document.removeEventListener('mouseup', this.handleMouseUp);
     document.removeEventListener('mousedown', this.handleOutsidePopoverClick);
     document.removeEventListener('docmd:page-mounted', this.handlePageMounted as EventListener);
+    window.removeEventListener('hashchange', this.handleHashChange);
     this.publishWidget?.remove();
     this.publishWidget = null;
   }
@@ -61,6 +62,7 @@ export class ThreadsApp extends LitElement {
     document.addEventListener('mouseup', this.handleMouseUp);
     document.addEventListener('mousedown', this.handleOutsidePopoverClick);
     document.addEventListener('docmd:page-mounted', this.handlePageMounted as EventListener);
+    window.addEventListener('hashchange', this.handleHashChange);
 
     // Always initialize sidebar column so the panel is available for FAB toggle
     this.initSidebarColumn();
@@ -293,8 +295,15 @@ export class ThreadsApp extends LitElement {
 
   // ─── Page lifecycle ───────────────────────────────────────────────
 
+  /** A quote link to the open page only changes the fragment: handle it without a reload. */
+  private handleHashChange = (): void => {
+    this.deepLinkDone = false;
+    this.handleDeepLink();
+  };
+
   private handlePageMounted = (_e: CustomEvent): void => {
     this.popoverActive = false;
+    this.deepLinkDone = false;
     this.loadThreads();
     this.injectNewThreadButton();
   };
@@ -325,7 +334,8 @@ export class ThreadsApp extends LitElement {
     if (this.deepLinkDone) return;
     const m = /^#thread-(.+)$/.exec(location.hash);
     if (!m) { this.deepLinkDone = true; return; }
-    const id = decodeURIComponent(m[1]!);
+    let id: string;
+    try { id = decodeURIComponent(m[1]!); } catch { this.deepLinkDone = true; return; }
     if (!this.threads.some(th => th.id === id)) return;
     this.deepLinkDone = true;
     const sel = `[data-thread-id="${CSS.escape(id)}"]`;
@@ -835,7 +845,11 @@ export class ThreadsApp extends LitElement {
       if (existing) { void existing.refresh(); return; }
       panelBody.textContent = '';
       const reviews = document.createElement('threads-reviews-panel');
-      reviews.addEventListener('reviews-changed', () => { void this.loadThreads(); });
+      reviews.addEventListener('reviews-changed', (e) => {
+        // The reload below re-enters this method, which refreshes the mounted Reviews panel.
+        e.preventDefault();
+        void this.loadThreads();
+      });
       panelBody.appendChild(reviews);
       return;
     }

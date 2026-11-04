@@ -19,25 +19,36 @@ test.afterEach(async ({ page }) => {
   await cleanThreads(page);
 });
 
-test("a published review is listed, its quote links to the thread, and Discard asks first", async ({ page }) => {
-  const quote = await page.evaluate(() => (document.querySelector("main p, .content p, article p") as HTMLElement).textContent!.trim().split(" ").slice(0, 3).join(" "));
+const firstWords = () =>
+  (document.querySelector("main p, .content p, article p") as HTMLElement).textContent!.trim().split(" ").slice(0, 3).join(" ");
+
+async function seedAndPublish(page: import("@playwright/test").Page, quote: string, body: string): Promise<string> {
   await page.evaluate(
-    ({ quote }) =>
+    ({ quote, body }) =>
       docmd.call("threads:add-thread", {
         file: document.body.dataset["sourceFile"],
         anchor: { quote, prefix: null, suffix: null, selector: null, offset: null, blockText: null },
         author: "TestUser",
         authorKey: "TestUser",
-        body: "reviews journey",
+        body,
       }),
-    { quote },
+    { quote, body },
   );
-  const { reviewId } = await publishReview(page);
-  await page.reload();
-  await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+  return (await publishReview(page)).reviewId;
+}
 
+async function openReviews(page: import("@playwright/test").Page): Promise<void> {
+  await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
   await page.locator(".tc-sidebar-toggle").click();
   await page.getByTestId("tab-reviews").click();
+}
+
+test("a published review is listed, its quote links to the thread (same page and across pages), and Discard asks first", async ({ page }) => {
+  const quote = await page.evaluate(firstWords);
+  const reviewId = await seedAndPublish(page, quote, "reviews journey");
+  await page.reload();
+  await openReviews(page);
+
   const entry = page.locator(`[data-testid="review"][data-review-id="${reviewId}"]`);
   await expect(entry).toBeVisible();
   await expect(entry).toContainText("TestUser");
@@ -46,12 +57,12 @@ test("a published review is listed, its quote links to the thread, and Discard a
   await expect(link).toHaveText(quote);
   await expect(link).toHaveAttribute("href", /#thread-/);
 
-  // The link opens the page and scrolls to the thread.
+  // Same page: only the fragment changes. Scroll away first so the assertion can fail.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(page.locator("mark.threads-highlight").first()).not.toBeInViewport();
   await link.click();
-  await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
-  await expect(page.locator("mark.threads-highlight")).toBeInViewport();
-  await page.locator(".tc-sidebar-toggle").click();
-  await page.getByTestId("tab-reviews").click();
+  await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
+  await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
 
   // Cancel closes the dialog and leaves the review published.
   await entry.getByTestId("review-discard").click();
@@ -68,15 +79,39 @@ test("a published review is listed, its quote links to the thread, and Discard a
   await expect(entry.getByTestId("review-discard")).toHaveCount(0);
 });
 
-test("the open review's title form saves, and a deep link to an unknown thread does nothing", async ({ page }) => {
-  await page.goto("/#thread-nope");
+test("a quote link from another page loads the page, scrolls to the thread and flashes it", async ({ page }) => {
+  await page.goto("/mermaid-preview/");
   await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+  const quote = await page.evaluate(firstWords);
+  await seedAndPublish(page, quote, "cross-page");
+
+  await page.goto("/");
+  await openReviews(page);
+  await page.getByTestId("review-op").filter({ hasText: quote }).first().click();
+  await expect(page).toHaveURL(/mermaid-preview\/#thread-/);
+  await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
+  await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
+  await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
+});
+
+test("the open review's title form saves, and a deep link to an unknown thread does nothing", async ({ page }) => {
+  // whoami has a journal only once a draft exists.
+  await page.evaluate(() =>
+    docmd.call("threads:add-thread", {
+      file: document.body.dataset["sourceFile"],
+      anchor: null,
+      author: "TestUser",
+      authorKey: "TestUser",
+      body: "title form",
+    }),
+  );
+  await page.goto("/#thread-nope");
   await expect(page.locator(".threads-thread--flash")).toHaveCount(0);
 
-  await page.locator(".tc-sidebar-toggle").click();
-  await page.getByTestId("tab-reviews").click();
+  await openReviews(page);
   await page.getByTestId("review-title").fill("My review");
   await page.getByTestId("review-save").click();
-  const title = await page.evaluate(async () => (await docmd.call("threads:whoami", { author: "TestUser", authorKey: "TestUser" })).journal.review.title);
-  expect(title).toBe("My review");
+  await expect
+    .poll(() => page.evaluate(async () => (await docmd.call("threads:whoami", { author: "TestUser", authorKey: "TestUser" })).journal.review.title))
+    .toBe("My review");
 });
