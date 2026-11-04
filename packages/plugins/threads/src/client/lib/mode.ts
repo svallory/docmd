@@ -113,7 +113,7 @@ export function widgetState(input: WidgetStateInput): WidgetState {
   return {
     variant,
     showPlayPause: input.autoPublish,
-    publishDisabled: input.publishing || !known || pendingCount < 1,
+    publishDisabled: input.publishing || pendingCount < 1,
     ringRunning: input.autoPublish && input.mode === 'auto' && !input.publishing && pendingCount >= 1,
     label: !known ? '…' : tr(pendingCount === 1 ? 'unpublishedCountOne' : 'unpublishedCount').replace('{n}', String(pendingCount)),
     orphanLine: orphanedMine > 0
