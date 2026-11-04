@@ -1,14 +1,14 @@
 import type { Caller } from '../../src/types.ts';
 
 // The decision table shared by the server (`canDo`) and the client (`canShow`).
-export type Action = 'edit-comment' | 'delete-comment' | 'delete-thread' | 'resolve-thread' | 'discard-review' | 'upsert-author';
-export interface Target {
-  authorKey?: string | null;
-  authorKeys?: Array<string | null | undefined>;
-  threadAuthor?: string | null;
-  reviewAuthor?: string | null;
-  drafted?: boolean;
-}
+import type { PermissionAction as Action, PermissionTarget as Target } from '../../src/plugin/permissions.ts';
+import type { ShowAction, ShowTarget } from '../../src/client/lib/can-show.ts';
+
+// Type-level: whatever the client may ask must be something the server's table knows.
+type Assert<T extends true> = T;
+export type _ActionsKnown = Assert<ShowAction extends Action ? true : false>;
+export type _TargetsKnown = Assert<ShowTarget extends Target ? true : false>;
+export type { Action, Target };
 
 export const who = (key: string, over: Partial<Caller> = {}): Caller =>
   ({ key, name: key, email: null, avatarUrl: '', source: 'header', isAdmin: false, ...over });

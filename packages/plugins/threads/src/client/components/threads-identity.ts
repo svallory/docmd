@@ -10,7 +10,7 @@ import {
   computeAuthorKey, setAuthorKey,
   getIdentityMode,
 } from '../lib/identity';
-import { upsertAuthor } from '../lib/api';
+import { upsertAuthor, ThreadsClientError } from '../lib/api';
 
 @customElement('threads-identity')
 export class ThreadsIdentity extends LitElement {
@@ -21,6 +21,7 @@ export class ThreadsIdentity extends LitElement {
   @state() private github = '';
   @state() private avatarUrl = '';
   @state() private panelOpen = false;
+  @state() private error: string | null = null;
 
   private outsideClickHandler = (e: MouseEvent) => {
     if (!this.contains(e.target as Node)) {
@@ -34,6 +35,7 @@ export class ThreadsIdentity extends LitElement {
     if (me.mode === 'header') {
       this.name = me.payload.author;
       this.avatarUrl = me.payload.avatarUrl;
+      this.email = getEmail() || '';
     } else {
       this.name = getAuthor() || '';
       this.email = getEmail() || '';
@@ -66,11 +68,19 @@ export class ThreadsIdentity extends LitElement {
     if (me.mode === 'header') {
       const val = nameInput?.value.trim();
       if (val) this.name = val;
+      // The email only picks the avatar; it never changes the key.
+      const emailVal = this.querySelector<HTMLInputElement>('#identity-email')?.value.trim() ?? '';
+      this.email = emailVal;
+      setEmail(emailVal);
+      if (emailVal) this.avatarUrl = await computeAvatarUrl(emailVal, '');
       try {
         await upsertAuthor(null, this.name, this.avatarUrl);
-      } catch {
-        // Surface nothing: the server stays the authority on the profile
+      } catch (err) {
+        // The server is the authority on the profile: keep the panel open and say why (e.g. threads/forbidden).
+        this.error = err instanceof ThreadsClientError ? err.text : (err instanceof Error ? err.message : String(err));
+        return;
       }
+      this.error = null;
       this.panelOpen = false;
       return;
     }
@@ -168,7 +178,7 @@ export class ThreadsIdentity extends LitElement {
             />
           </label>
           `}
-          ${header ? nothing : html`
+          ${html`
           <label class="threads-identity-label">
             ${t('gravatarEmail')}
             <input
@@ -180,7 +190,8 @@ export class ThreadsIdentity extends LitElement {
             />
           </label>
           `}
-          ${header ? nothing : html`<p class="threads-identity-hint">${t('avatarHint')}</p>`}
+          ${this.error ? html`<p class="threads-identity-hint" data-testid="identity-error" role="alert">${this.error}</p>` : nothing}
+          <p class="threads-identity-hint">${t('avatarHint')}</p>
           <div class="threads-identity-actions">
             <button class="threads-identity-cancel" @click=${this.handleCancel}>${t('cancel')}</button>
             <button class="threads-identity-save" @click=${this.handleSave}>${t('save')}</button>

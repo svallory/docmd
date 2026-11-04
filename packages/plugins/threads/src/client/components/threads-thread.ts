@@ -67,6 +67,7 @@ export class ThreadsThread extends LitElement {
           ${t.comments.map(c => html`
             <threads-comment
               .comment=${c}
+              .isOpenerWithReplies=${c === t.comments[0] && !c.draft && t.comments.filter(x => !x.draft).length > 1}
               .currentAuthor=${this.currentAuthor}
             ></threads-comment>
           `)}
