@@ -1,4 +1,4 @@
-import type { Thread, Comment, Reaction, AuthorsMap, Journal, WhoAmI, PublishResult, DraftMode } from '../../types';
+import type { Thread, Comment, Reaction, AuthorsMap, Journal, WhoAmI, PublishResult, DraftMode, ReviewSummary } from '../../types';
 import { getIdentityPayload } from './identity';
 
 declare global {
@@ -150,4 +150,16 @@ export function setMode(mode: DraftMode): Promise<Journal> {
 
 export function publishReview(input: { title?: string | null; summary?: string | null } = {}): Promise<PublishResult> {
   return call('threads:publish-review', { ...getIdentityPayload(), ...input });
+}
+
+export function listReviews(): Promise<ReviewSummary[]> {
+  return call('threads:list-reviews', {});
+}
+
+export async function discardReview(reviewId: string): Promise<void> {
+  await call('threads:discard-review', { ...getIdentityPayload(), reviewId });
+}
+
+export function updateReview(input: { title?: string | null; summary?: string | null }): Promise<Journal> {
+  return call('threads:update-review', { ...getIdentityPayload(), ...input });
 }

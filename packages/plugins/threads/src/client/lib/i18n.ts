@@ -61,6 +61,18 @@ const defaults: Record<string, string> = {
   modeFailed: 'Could not change publishing mode',
   loadFailed: 'Could not load your comments',
   draft: 'Draft',
+  reviews: "Reviews",
+  discard: "Discard",
+  discardConfirm: "Discard this review? Its comments are removed from the pages.",
+  discarded: "Discarded",
+  orphaned: "Orphaned",
+  reviewTitle: "Review title",
+  reviewSummary: "Summary",
+  published: "Published",
+  noReviews: "No reviews yet.",
+  openReview: "Your open review",
+  discardFailed: "Could not discard the review",
+  saveFailed: "Could not save the review",
 };
 
 /**

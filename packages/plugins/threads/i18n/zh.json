@@ -54,5 +54,17 @@
   "skippedOpsOne": "{n} 项更改无法应用",
   "modeFailed": "无法更改发布模式",
   "loadFailed": "无法加载你的评论",
-  "draft": "草稿"
+  "draft": "草稿",
+  "reviews": "评审",
+  "discard": "丢弃",
+  "discardConfirm": "丢弃此评审？其评论将从页面中移除。",
+  "discarded": "已丢弃",
+  "orphaned": "失去锚点",
+  "reviewTitle": "评审标题",
+  "reviewSummary": "摘要",
+  "published": "已发布",
+  "noReviews": "暂无评审。",
+  "openReview": "你的未发布评审",
+  "discardFailed": "无法丢弃评审",
+  "saveFailed": "无法保存评审"
 }
