@@ -7,56 +7,32 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-/** Path to the playground index.md used by the dev server. */
-const PLAYGROUND_INDEX = path.resolve(
-  __dirname,
-  "../../../../_playground/docs/index.md",
-);
-
-if (!fs.existsSync(PLAYGROUND_INDEX)) {
-  throw new Error(
-    `e2e: playground page not found at ${PLAYGROUND_INDEX} (the site lives in the repo-root _playground/)`,
-  );
-}
-
-/** Snapshot another playground page a test will write to; the returned function restores it. */
-export function snapshotPlaygroundPage(name: string): () => void {
-  const file = path.join(path.dirname(PLAYGROUND_INDEX), name);
-  const original = fs.readFileSync(file, "utf-8");
-  return () => fs.writeFileSync(file, original, "utf-8");
-}
-
-/** The pages the specs write to, with the route each is served on. */
-const PAGES: Array<[file: string, route: string]> = [
-  ["index.md", "/"],
-  ["mermaid-preview.md", "/mermaid-preview/"],
-];
+import { DOCS_DIR, PAGES } from "./playground.ts";
 
 /**
  * Restore the playground markdown to the pages global-setup snapshotted, removing any
  * dynamically-added threads/highlights from test runs, and wait until the dev server serves them clean.
- * The dev server drops file events for a second after each rebuild, so a restore can be missed: it is rewritten until served.
+ *
+ * Workaround for a core dev-server bug: its watcher drops genuine file edits made within 1 s of a rebuild
+ * finishing (CONTENT_QUIET_MS in the dev command), so a restore can be missed and is rewritten until served.
+ * Remove the retry loop when core stops dropping edits (tracker id: TBD, see the unit result).
+ * At most 3 attempts x 4 s per page keeps the worst case (24 s) under the 30 s hook timeout.
  */
 export async function cleanThreads(page: Page): Promise<void> {
   const snapshot = process.env["THREADS_E2E_SNAPSHOT"];
   if (!snapshot) throw new Error("e2e: THREADS_E2E_SNAPSHOT is unset (global-setup did not run)");
   // Drafts live in the journal, not the markdown: an unpublished op would ride into the next test's publish.
-  fs.rmSync(path.join(path.dirname(PLAYGROUND_INDEX), ".threads", "drafts", "TestUser.json"), { force: true });
-  for (const [file, route] of PAGES) {
+  fs.rmSync(path.join(DOCS_DIR, ".threads", "drafts", "TestUser.json"), { force: true });
+  for (const { file, route } of PAGES) {
     const served = async () => (await (await page.request.get(route)).text()).includes('<mark class="threads-highlight"');
     for (let attempt = 1; ; attempt++) {
-      fs.copyFileSync(path.join(snapshot, file), path.join(path.dirname(PLAYGROUND_INDEX), file));
+      fs.copyFileSync(path.join(snapshot, file), path.join(DOCS_DIR, file));
       try {
         await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 4_000 }).toBe(false);
         break;
       } catch (e) {
-        if (attempt === 5) throw e;
+        if (attempt === 3) throw e;
       }
     }
   }
@@ -64,7 +40,7 @@ export async function cleanThreads(page: Page): Promise<void> {
 
 /** Snapshot the published-review manifests; the returned function deletes those created since. */
 export function snapshotReviews(): () => void {
-  const dir = path.join(path.dirname(PLAYGROUND_INDEX), ".threads", "reviews");
+  const dir = path.join(DOCS_DIR, ".threads", "reviews");
   const list = () => (fs.existsSync(dir) ? fs.readdirSync(dir) : []);
   const before = new Set(list());
   return () => {
@@ -80,8 +56,9 @@ const servedHtml = (page: Page): Promise<string> =>
  * Publish the open review of `author` (comments are drafts until published); an empty review rejects.
  * Publishing writes the markdown and the dev server rebuilds asynchronously, so this resolves once the
  * served page differs from before the publish: a reload right after would otherwise race the rebuild.
- * The dev server drops file events for a second after each rebuild; if the publish landed in that window the
- * page is rebuilt by appending a newline to its source (the next cleanThreads restores it).
+ * Workaround for the same core dev-server bug as cleanThreads (it drops edits within 1 s of a rebuild): if the
+ * publish landed in that window the page is rebuilt by appending a newline to its source (the next cleanThreads
+ * restores it). Remove the fallback with the core fix (tracker id: TBD, see the unit result).
  */
 export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
   const before = await servedHtml(page);
@@ -91,7 +68,7 @@ export async function publishReview(page: Page, author = "TestUser"): Promise<{ 
   try {
     await rebuilt();
   } catch {
-    if (sourceFile) fs.appendFileSync(path.resolve(PLAYGROUND_INDEX, "../..", sourceFile), "\n");
+    if (sourceFile) fs.appendFileSync(path.resolve(DOCS_DIR, "..", sourceFile), "\n");
     await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 15_000 }).not.toBe(before);
   }
   return result;
