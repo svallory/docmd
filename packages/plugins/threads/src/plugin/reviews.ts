@@ -13,6 +13,8 @@ const TITLE_MAX = 120;
 const SUMMARY_MAX = 2000;
 
 const day = (iso: string) => iso.slice(0, 10);
+/** Kept (and exported) so units still merging that use it need no change. */
+export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 let tmpSeq = 0;
 
 // ---------------------------------------------------------------------------

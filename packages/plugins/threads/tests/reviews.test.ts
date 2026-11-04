@@ -288,6 +288,19 @@ test('publish-review writes K files, the manifest and resets the journal (AC-10,
   assert.ok(threads.every((t: any) => !t.draft && t.comments.every((c: any) => !c.draft)));
 });
 
+test('deleting a thread whose quote spans two lines restores the plain text', async () => {
+  const abs = path.join(project.root, OTHER);
+  fs.writeFileSync(abs, '# Other Page\n\nTarget line one\nline two here.\n');
+  await fill('k-alice', [{ kind: 'add-thread', file: OTHER, threadId: 't-ml', commentId: 'c-ml', anchor: { ...quote, quote: 'line one\nline two' }, body: 'multi' }]);
+  await actions['threads:publish-review']({ author: 'Alice', authorKey: 'k-alice' }, ctx());
+  assert.match(read(OTHER), /==line one\nline two=={t-ml}/);
+
+  await fill('k-alice', [{ kind: 'delete-thread', file: OTHER, threadId: 't-ml' }]);
+  await actions['threads:publish-review']({ author: 'Alice', authorKey: 'k-alice' }, ctx());
+  assert.ok(!read(OTHER).includes('=={t-ml}'));
+  assert.ok(read(OTHER).includes('Target line one\nline two here.'));
+});
+
 test('publish records the injected clock and a default title; empty-review writes nothing (AC-3, A-7)', async () => {
   await fill('k-bob', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-b', parentId: null, body: 'Hi' }]);
   const sync = createNoGitSync(createLock());
