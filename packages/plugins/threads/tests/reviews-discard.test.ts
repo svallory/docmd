@@ -222,7 +222,8 @@ test('discard runs through sync.withLock and publishWithRetry, and records the i
   assert.deepEqual(m.discardSkipped, []);
 });
 
-test('a discard in the window after a failed journal reset is not undone by the next publish', async () => {
+/** A publish whose files and manifest were written but whose journal reset failed, then discarded. */
+async function discardedInWindow() {
   await fill('k-alice', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-win', parentId: null, body: 'Window' }]);
   const real = store();
   let failed = false;
@@ -234,21 +235,26 @@ test('a discard in the window after a failed journal reset is not undone by the 
   await assert.rejects(publish(ALICE_CALLER, ctx(), {}, { store: flaky, sync: createNoGitSync(createLock()) }), /reset failed/);
   const id = (await real.load('k-alice')).review.id;
   assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'the publish wrote its file');
-
   await actions['threads:discard-review']({ ...ALICE, reviewId: id }, ctx());
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
-  const discarded = manifestOf(id);
+  return { id, real, discarded: manifestOf(id) };
+}
 
+test('a discard in the window after a failed journal reset is not undone by the next publish', async () => {
+  const { id, real, discarded } = await discardedInWindow();
   // nothing left to publish: the reset is finished, not reported as a publish
   await assert.rejects(actions['threads:publish-review'](ALICE, ctx()), /threads\/empty-review/);
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'discarded comment did not come back');
   assert.deepEqual(manifestOf(id), discarded);
-  // ops drafted in the window publish under the new id
+  assert.notEqual((await real.load('k-alice')).review.id, id, 'the journal was reset');
+});
+
+test('ops drafted after such a discard publish under a new review id', async () => {
+  const { id, discarded } = await discardedInWindow();
   await fill('k-alice', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-after', parentId: null, body: 'After' }]);
   const next = await actions['threads:publish-review'](ALICE, ctx());
   assert.notEqual(next.reviewId, id);
   assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-after')));
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
   assert.deepEqual(manifestOf(id), discarded);
-  assert.notEqual((await real.load('k-alice')).review.id, id, 'the journal was reset');
 });
