@@ -125,3 +125,13 @@ export function normalizeOptions(rawInput?: unknown): ThreadsOptions {
 export function getOptions(ctx: { config?: any }): ThreadsOptions {
   return normalizeOptions(ctx.config?.plugins?.threads);
 }
+
+/**
+ * Checks that need the process environment, run when the server starts: with
+ * git sync on, the push credential must be set (there is no default).
+ */
+export function assertRuntime(opts: ThreadsOptions, env: NodeJS.ProcessEnv): void {
+  if (opts.git && !env.DOCMD_THREADS_GIT_TOKEN) {
+    throw new ThreadsError('config', 'DOCMD_THREADS_GIT_TOKEN is required when plugins.threads.git is set');
+  }
+}

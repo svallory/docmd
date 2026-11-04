@@ -4,14 +4,14 @@ import { fileURLToPath } from 'url';
 import { setup as setupContainers } from './plugin/containers.js';
 import { setup as setupHighlightRule } from './plugin/highlight-rule.js';
 import { actions } from './plugin/actions.js';
-import { normalizeOptions } from './plugin/config.js';
+import { assertRuntime, normalizeOptions } from './plugin/config.js';
 import { scriptLiteral } from '@docmd/utils';
-import type { PluginDescriptor } from '@docmd/api';
+import type { PluginDescriptor, ServerHandle } from '@docmd/api';
 
 export const plugin: PluginDescriptor = {
   name: 'threads',
   version: '0.9.9',
-  capabilities: ['markdown', 'body', 'assets', 'actions', 'translations'],
+  capabilities: ['markdown', 'body', 'assets', 'actions', 'translations', 'server'],
   requiresLiveServer: true
 };
 
@@ -89,6 +89,13 @@ export function getAssets(_options?: any): any[] {
       location: 'head'
     }
   ];
+}
+
+/** Fails the start of the server when git sync is on without its push credential. */
+export async function onServerReady(handle: ServerHandle): Promise<void> {
+  const opts = normalizeOptions(handle.config?.plugins?.threads);
+  assertRuntime(opts, process.env);
+  console.log(`[threads] ready${opts.identityHeader ? `, identity header: ${opts.identityHeader}` : ''}${opts.git ? `, git sync: ${opts.git.remote}/${opts.git.branch}` : ''}`);
 }
 
 export { actions };

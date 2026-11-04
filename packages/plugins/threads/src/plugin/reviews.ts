@@ -6,7 +6,7 @@ import * as parser from './parser.js';
 import { ThreadsError } from './errors.js';
 import { markPattern, splitPage } from './marks.js';
 import { authorsPath, readAuthorsRaw, writeAuthors } from './authors.js';
-import { createLock, createNoGitSync, type Sync } from './lock.js';
+import type { Applied, Sync } from './lock.js';
 import type { DraftStore } from './drafts.js';
 import type { Caller, Comment, DraftOp, ManifestOp, PublishResult, ReviewManifest, ReviewSummary, Thread } from '../types.js';
 
@@ -494,14 +494,10 @@ export interface PublishDeps {
   newId?: (prefix: string) => string;
 }
 
-/** One sync (and so one lock) per docs root, so every caller's publish queues behind the same chain. */
-const syncs = new Map<string, Sync>();
-export function defaultSync(ctx: ActionContext): Sync {
-  const root = docsRootOf(ctx);
-  let sync = syncs.get(root);
-  if (!sync) syncs.set(root, (sync = createNoGitSync(createLock())));
-  return sync;
-}
+export { getSync } from './git-sync.js';
+
+/** The manifest of a review as the sync is told about it: relative to the project root, like a target file. */
+const manifestFileOf = (ctx: ActionContext, id: string): string => path.relative(ctx.projectRoot, path.join(reviewsDir(ctx), `${id}.json`));
 
 /** Drop a published profile from the journal, unless the caller edited it again meanwhile. */
 /** `authors.json` as the sync is told about it: relative to the project root, like a target file. */
@@ -544,8 +540,11 @@ export async function publish(
       // A profile edit alone: authors.json is the whole publish, with no review or manifest.
       const profile = journal.profile;
       await sync.publishWithRetry(
-        async () => void (await writeProfile(ctx, caller.key, profile)),
-        { reviewId: journal.review.id, authorKey: caller.key, authorName: caller.name, files: [profileFileOf(ctx)] },
+        async () => {
+          await writeProfile(ctx, caller.key, profile);
+          return { title: `${caller.name} updated their profile`, summary: null };
+        },
+        { reviewId: journal.review.id, authorKey: caller.key, authorName: caller.name, authorEmail: caller.email, kind: 'publish', files: [profileFileOf(ctx)] },
       );
       await clearProfile(store, caller.key, journal.profile);
       return { reviewId: journal.review.id, skipped: [] };
@@ -566,6 +565,7 @@ export async function publish(
     else await sync.publishWithRetry(
       async () => {
         const applied: ManifestOp[] = [];
+        let commitInfo: Applied = { title: '', summary: null };
         skipped = [];
         const titles: Record<string, string | null> = {};
         const results: Array<{ file: string; original: string; next: string }> = [];
@@ -591,21 +591,29 @@ export async function publish(
         await writeAllOrNothing(ctx, results, async () => {
           const title = 'title' in input ? input.title : journal.review.title;
           const summary = 'summary' in input ? input.summary : journal.review.summary;
+          const finalTitle = cleanTitle(title || defaultTitle(caller.name, ops, titles));
+          const finalSummary = summary ? cleanSummary(summary) : null;
+          commitInfo = { title: finalTitle, summary: finalSummary };
           await writeManifest(ctx, {
             version: 1,
             id: reviewId,
             authorKey: caller.key,
             authorName: caller.name,
-            title: cleanTitle(title || defaultTitle(caller.name, ops, titles)),
-            summary: summary ? cleanSummary(summary) : null,
+            title: finalTitle,
+            summary: finalSummary,
             state: 'published',
             publishedAt: new Date(now()).toISOString(),
             ops: applied,
             skipped,
           });
         }, 'publish', journal.profile ? () => writeProfile(ctx, caller.key, journal.profile!) : undefined);
+        return commitInfo;
       },
-      { reviewId, authorKey: caller.key, authorName: caller.name, files: journal.profile ? [...files, profileFileOf(ctx)] : files },
+      {
+        reviewId, authorKey: caller.key, authorName: caller.name, authorEmail: caller.email, kind: 'publish',
+        files: journal.profile ? [...files, profileFileOf(ctx)] : files,
+        manifest: manifestFileOf(ctx, reviewId),
+      },
     );
 
     // Drop what was published (ops added meanwhile stay) and start a fresh review.
@@ -707,8 +715,13 @@ export async function discard(
           discardedBy: caller.key,
           discardSkipped,
         }), 'discard');
+        return { title: manifest.title, summary: null };
       },
-      { reviewId, authorKey: caller.key, authorName: caller.name, files },
+      {
+        reviewId, authorKey: caller.key, authorName: caller.name, authorEmail: caller.email, kind: 'discard',
+        files,
+        manifest: manifestFileOf(ctx, reviewId),
+      },
     );
     return { discarded: true } as const;
   });

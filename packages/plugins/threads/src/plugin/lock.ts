@@ -19,8 +19,20 @@ export interface PublishMeta {
   reviewId: string;
   authorKey: string;
   authorName: string;
-  /** Files the journal targets. */
+  /** The author's email; a git sync falls back to a placeholder when absent. */
+  authorEmail?: string | null;
+  /** What the change is: a published review or a discard (default publish). */
+  kind?: 'publish' | 'discard';
+  /** Files the change touches, relative to the project root. */
   files: string[];
+  /** The review manifest the change writes, relative to the project root (committed with the files). */
+  manifest?: string;
+}
+
+/** What `apply` reports once it has written the files: the commit message is built from it. */
+export interface Applied {
+  title: string;
+  summary: string | null;
 }
 
 /**
@@ -32,13 +44,13 @@ export interface PublishMeta {
  */
 export interface Sync {
   withLock<T>(fn: () => Promise<T>): Promise<T>;
-  publishWithRetry(apply: () => Promise<void>, meta: PublishMeta): Promise<void>;
+  publishWithRetry(apply: () => Promise<void | Applied>, meta: PublishMeta): Promise<void>;
 }
 
 /** The `docmd dev` path: no git process, `apply` runs once. */
 export function createNoGitSync(lock: Lock): Sync {
   return {
     withLock: (fn) => lock.withLock(fn),
-    publishWithRetry: (apply) => apply(),
+    publishWithRetry: async (apply) => void (await apply()),
   };
 }
