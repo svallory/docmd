@@ -1,4 +1,5 @@
-import type { Thread, Comment, Reaction, AuthorsMap } from '../../types';
+import type { Thread, Comment, Reaction, AuthorsMap, Journal, WhoAmI, PublishResult, DraftMode } from '../../types';
+import { getIdentityPayload } from './identity';
 
 declare global {
   var docmd: {
@@ -7,6 +8,7 @@ declare global {
     on(name: string, callback: (data: any) => void): () => void;
     afterReload(name: string, callback: (ctx: any) => void): void;
     scheduleReload(name: string, context?: any): void;
+    isLive(): boolean;
   };
 }
 
@@ -110,4 +112,42 @@ export async function toggleReaction(
     commentId,
     ...payload,
   });
+}
+
+/** A server rejection `threads/<code>: <text>` parsed back into its parts. */
+export class ThreadsClientError extends Error {
+  readonly code: string;
+  readonly text: string;
+
+  constructor(code: string, text: string) {
+    super(`threads/${code}: ${text}`);
+    this.name = 'ThreadsClientError';
+    this.code = code;
+    this.text = text;
+  }
+}
+
+const WIRE_ERROR = /^threads\/([a-z][a-z-]*): ([\s\S]*)$/;
+
+/** `docmd.call` that turns `threads/<code>: <text>` rejections into ThreadsClientError. */
+async function call<T>(action: string, payload: any): Promise<T> {
+  try {
+    return await docmd.call(action, payload);
+  } catch (err) {
+    const m = WIRE_ERROR.exec(err instanceof Error ? err.message : String(err));
+    if (m) throw new ThreadsClientError(m[1]!, m[2]!);
+    throw err;
+  }
+}
+
+export function whoami(): Promise<WhoAmI> {
+  return call('threads:whoami', getIdentityPayload());
+}
+
+export function setMode(mode: DraftMode): Promise<Journal> {
+  return call('threads:set-mode', { ...getIdentityPayload(), mode });
+}
+
+export function publishReview(input: { title?: string | null; summary?: string | null } = {}): Promise<PublishResult> {
+  return call('threads:publish-review', { ...getIdentityPayload(), ...input });
 }

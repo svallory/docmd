@@ -11,6 +11,8 @@ import { createSvgElement, getThreadSvg } from '../lib/icons';
 import './threads-popover';
 import './threads-inline-editor';
 import './threads-identity';
+import './threads-publish-widget';
+import type { ThreadsPublishWidget } from './threads-publish-widget';
 
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
@@ -30,6 +32,7 @@ export class ThreadsApp extends LitElement {
   private pendingBlockEl: HTMLElement | null = null;
   private deleteTarget: { type: 'thread' | 'comment'; id: string; threadId?: string } | null = null;
   private inlineEditorEl: HTMLElement | null = null;
+  private publishWidget: ThreadsPublishWidget | null = null;
 
   /** Whether sidebar mode is enabled via plugin config. Default: false (inline mode). */
   private get sidebarEnabled(): boolean {
@@ -41,6 +44,8 @@ export class ThreadsApp extends LitElement {
     document.removeEventListener('mouseup', this.handleMouseUp);
     document.removeEventListener('mousedown', this.handleOutsidePopoverClick);
     document.removeEventListener('docmd:page-mounted', this.handlePageMounted as EventListener);
+    this.publishWidget?.remove();
+    this.publishWidget = null;
   }
 
   override connectedCallback(): void {
@@ -58,6 +63,7 @@ export class ThreadsApp extends LitElement {
     this.loadThreads();
     this.injectNewThreadButton();
     this.injectFab();
+    this.mountPublishWidget();
 
     // Register afterReload handler for post-mutation continuity
     if (typeof docmd !== 'undefined' && docmd.afterReload) {
@@ -305,6 +311,15 @@ export class ThreadsApp extends LitElement {
     }
     this.scanRenderedHighlights();
     this.updateFabBadge();
+    void this.publishWidget?.refresh();
+  }
+
+  /** The publish widget exists only against a live server. */
+  private mountPublishWidget(): void {
+    if (this.publishWidget || typeof docmd === 'undefined' || !docmd.isLive?.()) return;
+    const el = document.createElement('threads-publish-widget') as ThreadsPublishWidget;
+    document.body.appendChild(el);
+    this.publishWidget = el;
   }
 
   // Color palette for highlights - cycles through these

@@ -60,7 +60,9 @@ export function generateScripts(config: any, options?: any): { headScriptsHtml: 
     authors = {};
   }
 
-  const clientConfig = { sidebar: normalizeOptions(options).sidebar };
+  const normalized = normalizeOptions(options);
+  // Only what the client reads: never identityHeader, permissions or git.
+  const clientConfig = { sidebar: normalized.sidebar, autoPublish: normalized.autoPublish };
   const i18nStrings = loadPluginStrings(config._activeLocale?.id || 'en');
 
   return {
