@@ -75,13 +75,16 @@ export function createGitSync(opts: NonNullable<ThreadsOptions['git']>, deps: Gi
   /** Back to origin, and drop what the change wrote that git does not know (a new manifest), so the review stays open. */
   const resetQuietly = async (meta: PublishMeta) => {
     await git(['reset', '--hard', `origin/${branch}`]).catch(() => undefined);
-    await git(['clean', '-fdq', '--', ...pathsOf(meta)]).catch(() => undefined);
+    // Only what the change creates (the manifest, authors.json): never a target page, never an empty pathspec.
+    const created = pathsOf(meta).filter((f) => f.includes('.threads/'));
+    if (created.length) await git(['clean', '-fdq', '--', ...created]).catch(() => undefined);
   };
 
-  /** A coded, path-free error for the client; the raw error stays in `cause` and the server log. */
+  /** A coded, path-free error for the client (the remote may carry credentials); the raw error stays in `cause`, redacted in the log. */
   const fail = (what: string, cause: unknown) => {
-    console.error(`[threads] git ${what} failed:`, cause);
-    return new ThreadsError('push-failed', `could not ${what} ${remote}/${branch}; the review is unchanged, try again`, { cause });
+    const raw = cause instanceof Error ? `${cause.message}` : String(cause);
+    console.error(`[threads] git ${what} failed: ${raw.replace(/\/\/[^@/\s]*@/g, '//***@')}`);
+    return new ThreadsError('push-failed', `could not ${what} the remote branch ${branch}; the review is unchanged, try again`, { cause });
   };
 
   return {
