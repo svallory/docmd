@@ -64,33 +64,35 @@ const call = (name: string, payload: Record<string, unknown>, limits: Record<str
     { file: project.file, ...payload },
     makeCtx(project.root, { config: config(limits) }),
   );
-const A = { author: 'A', authorKey: 'a' };
-const B = { author: 'B', authorKey: 'b' };
+// Each wiring case owns its keys: the limiter is shared per project root, so cases must not share a window.
+const A1 = { author: 'A1', authorKey: 'a1' };
+const A2 = { author: 'A2', authorKey: 'a2' };
+const B2 = { author: 'B2', authorKey: 'b2' };
 const ops = async (key: string) => (await createDraftStore(path.join(project.root, 'docs')).load(key)).ops;
 
 test('over-long bodies reject on add-thread, add-comment and edit-comment without touching the journal', async () => {
   const limits = { maxCommentChars: 10, commentsPerMinute: 100 };
-  const made = await call('add-thread', { ...A, body: '0123456789' }, limits); // exactly the cap
+  const made = await call('add-thread', { ...A1, body: '0123456789' }, limits); // exactly the cap
   assert.equal(made.comments[0].body, '0123456789');
   const reject = async (name: string, extra: Record<string, unknown>) =>
-    assert.rejects(call(name, { ...A, body: '0123456789X', ...extra }, limits), { message: /^threads\/limit-chars/ });
+    assert.rejects(call(name, { ...A1, body: '0123456789X', ...extra }, limits), { message: /^threads\/limit-chars/ });
   await reject('add-thread', {});
   await reject('add-comment', { threadId: made.id });
   await reject('edit-comment', { threadId: made.id, commentId: made.comments[0].id });
-  assert.equal((await ops('a')).length, 1);
+  const stored = await ops('a1');
+  assert.equal(stored.length, 1);
+  assert.equal((stored[0] as any).body, '0123456789'); // the rejected edit did not fold into the drafted add
 });
 
 test('the third add by one key in a minute rejects, another key passes, the window slides; edits are exempt', async () => {
   const limits = { commentsPerMinute: 2 };
-  const first = await call('add-thread', { ...A, body: 'one' }, limits);
+  const first = await call('add-thread', { ...A2, body: 'one' }, limits);
   mock.timers.tick(59_000);
-  await call('add-comment', { ...A, threadId: first.id, body: 'two' }, limits);
-  await assert.rejects(call('add-comment', { ...A, threadId: first.id, body: 'three' }, limits), { message: /^threads\/rate-limited/ });
-  await assert.rejects(call('add-thread', { ...A, body: 'three' }, limits), { message: /^threads\/rate-limited/ });
-  await call('add-thread', { ...B, body: 'other key' }, limits);
-  await call('edit-comment', { ...A, threadId: first.id, commentId: first.comments[0].id, body: 'edited' }, limits);
-  await call('toggle-reaction', { ...A, threadId: first.id, commentId: first.comments[0].id, emoji: '👍' }, limits);
-  assert.equal((await ops('a')).length, 3); // two adds, one reaction; the edit folded into the drafted add
-  mock.timers.tick(2_000); // t = 61 s
-  await call('add-comment', { ...A, threadId: first.id, body: 'four' }, limits);
+  await call('add-comment', { ...A2, threadId: first.id, body: 'two' }, limits);
+  await assert.rejects(call('add-comment', { ...A2, threadId: first.id, body: 'three' }, limits), { message: /^threads\/rate-limited/ });
+  await assert.rejects(call('add-thread', { ...A2, body: 'three' }, limits), { message: /^threads\/rate-limited/ });
+  await call('add-thread', { ...B2, body: 'other key' }, limits);
+  await call('edit-comment', { ...A2, threadId: first.id, commentId: first.comments[0].id, body: 'edited' }, limits);
+  await call('toggle-reaction', { ...A2, threadId: first.id, commentId: first.comments[0].id, emoji: '👍' }, limits);
+  assert.equal((await ops('a2')).length, 3); // two adds, one reaction; the edit folded into the drafted add
 });
