@@ -64,8 +64,8 @@ const tree = (dir: string): Record<string, string> => {
   return out;
 };
 const anchor = { quote: 'x', prefix: null, suffix: null, selector: null, offset: null, blockText: null };
-const WRITES = ['add-thread', 'add-comment', 'edit-comment', 'delete-comment', 'delete-thread', 'resolve-thread', 'toggle-reaction', 'publish-review', 'upsert-author', 'set-mode', 'update-review'];
-const payloadFor = () => ({ file: project.file, threadId: 't-thread1', commentId: 'c-1', body: 'b', emoji: '👍', anchor, name: 'N', mode: 'auto', author: 'Mallory', authorKey: 'mallory' });
+const WRITES = ['add-thread', 'add-comment', 'edit-comment', 'delete-comment', 'delete-thread', 'resolve-thread', 'toggle-reaction', 'publish-review', 'upsert-author', 'set-mode', 'update-review', 'discard-review'];
+const payloadFor = () => ({ file: project.file, threadId: 't-thread1', commentId: 'c-1', reviewId: 'r-1', body: 'b', emoji: '👍', anchor, name: 'N', mode: 'auto', author: 'Mallory', authorKey: 'mallory' });
 
 test('AC-1: every write rejects unauthenticated without the header, and changes nothing', async () => {
   const before = tree(project.root);

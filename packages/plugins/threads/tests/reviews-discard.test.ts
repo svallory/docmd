@@ -134,6 +134,7 @@ const read = (rel: string) => fs.readFileSync(path.join(project.root, rel), 'utf
 const manifestOf = (id: string) => JSON.parse(fs.readFileSync(path.join(docsRoot, '.threads', 'reviews', `${id}.json`), 'utf8'));
 const ALICE = { author: 'Alice', authorKey: 'k-alice' };
 const BOB = { author: 'Bob', authorKey: 'k-bob' };
+const ALICE_CALLER = { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' as const };
 const store = () => createDraftStore(docsRoot);
 const fill = (key: string, ops: NewDraftOp[]) => store().transact(key, (j, at) => void j.ops.push(...ops.map((o) => makeOp(o, at))));
 const threadsOf = (rel: string) => parser.parseThreadsFromContent(read(rel));
@@ -214,7 +215,6 @@ test('discard runs through sync.withLock and publishWithRetry, and records the i
     withLock: (fn) => { log.push('lock'); return lock.withLock(fn); },
     async publishWithRetry(apply, meta) { log.push(`retry:${meta.reviewId}`); await apply(); log.push('applied'); },
   };
-  const ALICE_CALLER = { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' as const };
   await discard(ALICE_CALLER, ctx(), aliceReview, { store: store(), sync, now: () => Date.parse('2031-02-03T04:05:06.000Z') });
   assert.deepEqual(log, ['lock', `retry:${aliceReview}`, 'applied']);
   const m = manifestOf(aliceReview);
@@ -231,7 +231,6 @@ async function discardedInWindow() {
     if (!failed) { failed = true; throw new Error('reset failed'); }
     return real.transact(...a);
   } };
-  const ALICE_CALLER = { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' as const };
   await assert.rejects(publish(ALICE_CALLER, ctx(), {}, { store: flaky, sync: createNoGitSync(createLock()) }), /reset failed/);
   const id = (await real.load('k-alice')).review.id;
   assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')), 'the publish wrote its file');
@@ -252,8 +251,10 @@ test('a discard in the window after a failed journal reset is not undone by the 
 test('ops drafted after such a discard publish under a new review id', async () => {
   const { id, discarded } = await discardedInWindow();
   await fill('k-alice', [{ kind: 'add-comment', file: FILE, threadId: 't-thread1', commentId: 'c-after', parentId: null, body: 'After' }]);
+  await store().transact('k-alice', (j) => void (j.profile = { name: 'Alice A', avatarUrl: '' }));
   const next = await actions['threads:publish-review'](ALICE, ctx());
   assert.notEqual(next.reviewId, id);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(docsRoot, '.threads', 'authors.json'), 'utf8'))['k-alice'].name, 'Alice A', 'the profile edit still published');
   assert.ok(threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-after')));
   assert.ok(!threadsOf(FILE).some((t) => t.comments.some((c) => c.id === 'c-win')));
   assert.deepEqual(manifestOf(id), discarded);
