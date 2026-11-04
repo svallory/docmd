@@ -149,6 +149,8 @@ export interface ReviewManifest {
   publishedAt: string;
   discardedAt?: string;
   discardedBy?: string;
+  /** Ops discard could not reverse (target gone since the publish). */
+  discardSkipped?: Array<{ opId: string; reason: string }>;
   ops: ManifestOp[];
   skipped: Array<{ opId: string; reason: string }>;
 }
