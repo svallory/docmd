@@ -116,7 +116,7 @@ test('mutations on published targets append an op of their kind', async () => {
 });
 
 test('deleting a published comment first drops the caller\'s earlier ops on it', async () => {
-  const t = { ...f(), ...ALICE, threadId: 't-thread1', commentId: 'c1-2' };
+  const t = { ...f(), ...ALICE, threadId: 't-thread1', commentId: 'c1-1' };
   await call('threads:edit-comment', { ...t, body: 'edited' });
   await call('threads:toggle-reaction', { ...t, emoji: '👍' });
   await call('threads:delete-comment', t);

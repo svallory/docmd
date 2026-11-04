@@ -10,7 +10,7 @@ export interface PermissionTarget {
   authorKey?: string | null;
   /** delete-thread: the key on each published comment of the thread. */
   authorKeys?: Array<string | null | undefined>;
-  /** resolve-thread: the key on the thread's opening comment; null if it is legacy. (Deleting the opener of a thread with replies deletes the whole thread, so the opener is never missing.) */
+  /** resolve-thread: the key on the thread's first comment; null if legacy. A thread whose opener was deleted before opener deletes became thread deletes, or by a stale draft, reports its first remaining comment. */
   threadAuthor?: string | null;
   /** discard-review: the key on the review's manifest. */
   reviewAuthor?: string | null;

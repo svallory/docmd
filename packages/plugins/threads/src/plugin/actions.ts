@@ -249,8 +249,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
     await transact(ctx, caller, payload, (tx) => {
       const thread = findThread(tx.view, threadId);
       const target = findComment(thread, commentId);
-      // The opening comment of a thread that has replies: admin only, and the whole thread goes (nothing records an opener once it is spliced out).
-      const wholeThread = !target.draft && thread.comments.length > 1 && thread.comments[0].id === commentId;
+      // The opening comment of a thread that has replies: admin only, and the whole thread goes (nothing records an opener once it is spliced out). Header callers only: payload callers keep the single-comment delete.
+      const wholeThread = caller.source === 'header' && !target.draft && thread.comments.filter((c) => !c.draft).length > 1 && thread.comments[0].id === commentId;
       assertCan(caller, 'delete-comment', { authorKey: wholeThread ? null : target.authorKey, drafted: target.draft }, getOptions(ctx).permissions);
       if (wholeThread) {
         drop(tx, opsOnThread(tx, threadId));
