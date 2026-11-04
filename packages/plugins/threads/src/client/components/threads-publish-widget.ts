@@ -164,7 +164,9 @@ export class ThreadsPublishWidget extends LitElement {
       await this.refresh();
       if (result.skipped.length > 0) {
         const n = result.skipped.length;
-        this.error = t(n === 1 ? 'skippedOpsOne' : 'skippedOps').replace('{n}', String(n));
+        const skipped = t(n === 1 ? 'skippedOpsOne' : 'skippedOps').replace('{n}', String(n));
+        // A failed refresh left a stale count on screen; keep its error beside the skipped line.
+        this.error = this.error ? `${this.error}. ${skipped}` : skipped;
       }
     } catch (err) {
       this.error = err instanceof api.ThreadsClientError ? err.text : t('publishFailed');
@@ -193,10 +195,13 @@ export class ThreadsPublishWidget extends LitElement {
       pendingCount: this.loaded ? this.pendingCount : null,
       orphanedMine: this.orphanedMine,
       publishing: this.publishing,
+      armed: this.remaining !== null,
       error: this.error,
       t,
     });
     const auto = s.variant === 'auto';
+    // Total and elapsed, not remaining: a re-render with the same updatedAt must not move the ring.
+    const total = (ap ? ap.seconds : 0) * 1000;
     return html`
       <div class="tpw" data-variant=${s.variant}>
         <div class="tpw__row">
@@ -207,9 +212,9 @@ export class ThreadsPublishWidget extends LitElement {
               aria-label=${t(s.playPauseAction)} @click=${() => void this.toggleMode()}>
               <svg class="tpw__ring" viewBox="0 0 28 28" aria-hidden="true">
                 <circle class="tpw__ring-track" cx="14" cy="14" r="12"></circle>
-                ${s.ringRunning && this.remaining !== null && this.journal ? keyed(this.journal.review.updatedAt, html`
+                ${s.ringRunning && this.journal ? keyed(this.journal.review.updatedAt, html`
                   <circle class="tpw__ring-bar" cx="14" cy="14" r="12"
-                    style="animation-duration:${Math.max(this.remaining, 1)}ms"></circle>`) : nothing}
+                    style="animation-duration:${total}ms;animation-delay:-${Math.max(0, total - (this.remaining ?? 0))}ms"></circle>`) : nothing}
               </svg>
               <span aria-hidden="true">${s.playPauseAction === 'pause' ? '⏸' : '▶'}</span>
             </button>` : nothing}

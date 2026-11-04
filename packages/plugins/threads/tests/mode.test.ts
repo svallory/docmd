@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPublishTimer, widgetState } from '../src/client/lib/mode.ts';
 
-const base = { autoPublish: true, mode: 'collect', pendingCount: 0, orphanedMine: 0, publishing: false, error: null } as const;
+const base = { autoPublish: true, mode: 'collect', pendingCount: 0, orphanedMine: 0, publishing: false, armed: true, error: null } as const;
 
 test('widgetState: autoPublish false is collect-only with no play/pause, Publish enabled', () => {
   const s = widgetState({ ...base, autoPublish: false, mode: 'auto', pendingCount: 2 });
@@ -18,6 +18,10 @@ test('widgetState: auto with pending runs the ring; without pending it does not 
   assert.equal(on.label, '3 unpublished comments');
   const off = widgetState({ ...base, mode: 'auto', pendingCount: 0 });
   assert.deepEqual([off.ringRunning, off.publishDisabled, off.label], [false, true, '0 unpublished comments']);
+});
+
+test('widgetState: auto with pending but no scheduled fire (a failed auto publish) shows no ring', () => {
+  assert.equal(widgetState({ ...base, mode: 'auto', pendingCount: 1, armed: false }).ringRunning, false);
 });
 
 test('widgetState: collect mode shows play/pause but never runs the ring', () => {

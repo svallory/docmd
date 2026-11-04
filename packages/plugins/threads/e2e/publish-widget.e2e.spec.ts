@@ -44,6 +44,5 @@ test("a comment counts as unpublished until Publish, and the widget sits bottom-
   await expect(page.getByTestId("tpw-count")).toHaveText("1 unpublished comment");
 
   await page.getByTestId("tpw-publish").click();
-  await page.waitForLoadState("load");
   await expect(page.getByTestId("tpw-count")).toHaveText("0 unpublished comments");
 });
