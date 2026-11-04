@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { cleanThreads, publishReview, setAuthor, snapshotPlaygroundPage, snapshotReviews } from "./helpers.ts";
+import { cleanThreads, publishReview, setAuthor, snapshotReviews } from "./helpers.ts";
 
 let restoreReviews: () => void;
 
@@ -98,23 +98,18 @@ test("title form, published review list, quote link (same page), and Discard ask
 });
 
 test("a quote link from another page loads the page, scrolls to the thread and flashes it", async ({ page }) => {
-  const restore = snapshotPlaygroundPage("mermaid-preview.md");
-  try {
-    await page.goto("/mermaid-preview/");
-    await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
-    const quote = await page.evaluate(firstWords);
-    const reviewId = await seedAndPublish(page, quote, "cross-page");
+  await page.goto("/mermaid-preview/");
+  await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+  const quote = await page.evaluate(firstWords);
+  const reviewId = await seedAndPublish(page, quote, "cross-page");
 
-    await page.goto("/");
-    await openReviews(page);
-    await page.locator(`[data-review-id="${reviewId}"]`).getByTestId("review-op").click();
-    await expect(page).toHaveURL(/mermaid-preview\/#thread-/);
-    await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
-    await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
-    await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
-  } finally {
-    restore();
-  }
+  await page.goto("/");
+  await openReviews(page);
+  await page.locator(`[data-review-id="${reviewId}"]`).getByTestId("review-op").click();
+  await expect(page).toHaveURL(/mermaid-preview\/#thread-/);
+  await page.waitForSelector("mark.threads-highlight", { timeout: 10_000 });
+  await expect(page.locator("mark.threads-highlight").first()).toBeInViewport();
+  await expect(page.locator("mark.threads-highlight").first()).toHaveClass(/threads-thread--flash/);
 });
 
 test("a deep link to an unknown thread neither scrolls nor flashes, after a full load with a real highlight on the page", async ({ page }) => {
