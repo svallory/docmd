@@ -8,6 +8,7 @@ import { getOptions } from './config.js';
 import { createDraftStore, makeOp, type DraftStore } from './drafts.js';
 import { guardWrite } from './limits.js';
 import { overlay } from './overlay.js';
+import { countOrphanedBy, fsOrphanScanDeps, markOrphans } from './orphans.js';
 import { findCaller, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
 import { defaultSync, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
 import type { Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
@@ -182,7 +183,8 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
   /** Published threads plus the caller's own drafts. */
   'threads:get-threads': async (payload, ctx): Promise<Thread[]> => {
     requireFields('threads:get-threads', payload, ['file']);
-    const published = parser.parseThreadsFromContent(await ctx.readFile(payload.file));
+    const content = await ctx.readFile(payload.file);
+    const published = markOrphans(content, parser.parseThreadsFromContent(content));
     const caller = findCaller(ctx, payload);
     if (!caller) return published;
     const journal = await getStore(ctx).load(caller.key);
@@ -196,8 +198,13 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
    */
   'threads:whoami': async (payload, ctx): Promise<WhoAmI> => {
     const identity = findCaller(ctx, payload);
-    if (!identity) return { identity: null, journal: null };
-    return { identity, journal: await getStore(ctx).load(identity.key) };
+    if (!identity) return { identity: null, journal: null, orphanedMine: 0 };
+    const docsRoot = path.join(ctx.projectRoot, ctx.config?.src || '');
+    return {
+      identity,
+      journal: await getStore(ctx).load(identity.key),
+      orphanedMine: await countOrphanedBy(docsRoot, identity.key, fsOrphanScanDeps),
+    };
   },
 
   'threads:set-mode': async (payload, ctx): Promise<Journal> => {

@@ -195,7 +195,7 @@ test('whoami reports the payload identity and journal, or nulls without one', as
   const withId = await call('threads:whoami', ALICE);
   assert.deepEqual(withId.identity, { key: 'k-alice', name: 'Alice', email: null, avatarUrl: '', source: 'payload' });
   assert.equal(withId.journal.authorKey, 'k-alice');
-  assert.deepEqual(await call('threads:whoami', {}), { identity: null, journal: null });
+  assert.deepEqual(await call('threads:whoami', {}), { identity: null, journal: null, orphanedMine: 0 });
 });
 
 test('set-mode persists collect and auto, and rejects other values', async () => {
