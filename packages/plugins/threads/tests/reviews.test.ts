@@ -56,9 +56,9 @@ test('applyOps writes each op kind with tokens and captures before-states', () =
     mk({ kind: 'add-thread', file: FILE, threadId: 't-new', commentId: 'c-new', anchor: { ...quote, quote: 'plain target text' }, body: 'New thread' }),
     mk({ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-reply', parentId: 'c-3', body: 'Reply' }),
     mk({ kind: 'edit-comment', file: FILE, threadId: 't-1', commentId: 'c-2', body: 'Second, edited.' }),
+    mk({ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-1' }),
     mk({ kind: 'resolve-thread', file: FILE, threadId: 't-2' }),
     mk({ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-2', emoji: '🎉' }),
-    mk({ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-2' }),
     mk({ kind: 'delete-thread', file: FILE, threadId: 't-1' }),
   ];
   const { content, applied, skipped } = applyOps(PAGE, ops, { ...OPTS, targets: deriveTargets(PAGE, ops, 'Alice') });
@@ -89,7 +89,7 @@ test('applyOps writes each op kind with tokens and captures before-states', () =
   assert.equal(by('add-thread').quote, 'plain target text');
   assert.ok(applied.every((o) => o.pageTitle === 'Sample'));
   assert.deepEqual(by('edit-comment').before, { body: 'Second.', edited_at: null });
-  assert.equal((by('delete-comment').before as any).comment.id, 'c-2');
+  assert.equal((by('delete-comment').before as any).comment.id, 'c-1');
   assert.deepEqual(by('resolve-thread').before, { resolved: false, resolved_by: null, resolved_at: null });
   assert.deepEqual(by('toggle-reaction').before, { present: false });
   assert.equal((by('delete-thread').before as any).thread.id, 't-1');
@@ -106,6 +106,13 @@ test('applyOps skips ops whose target is gone and applies the rest (A-10)', () =
   assert.deepEqual(applied.map((o) => o.opId), [good.opId]);
   assert.match(content, /c-ok/);
   assert.equal(applyOps(PAGE, [missingThread], OPTS).content, PAGE, 'nothing applied leaves the file byte-identical');
+});
+
+test('applyOps with enforce skips the delete of an opening comment that has replies', () => {
+  const op = mk({ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-1' });
+  const { content, skipped } = applyOps(PAGE, [op], { ...OPTS, enforce: true });
+  assert.deepEqual(skipped, [{ opId: op.opId, reason: 'opening comment has replies; delete the thread' }]);
+  assert.equal(content, PAGE);
 });
 
 test('replaying ops over their own output changes nothing, for every op kind (C-16)', () => {
