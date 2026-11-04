@@ -10,7 +10,7 @@ import { overlay } from './overlay.js';
 import { countOrphanedBy, fsOrphanScanDeps, markOrphans } from './orphans.js';
 import { readAuthors, writeAuthors } from './authors.js';
 import { findCaller, headerProfile, payloadProfile, profileFromPayload, resolveCaller } from './identity.js';
-import { defaultSync, discard, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
+import { getSync, discard, finishEarlierPublish, listManifests, parseReviewFields, publish, summarize } from './reviews.js';
 import type { AuthorsMap, Thread, Comment, Reaction, Anchor, Caller, DraftOp, Journal, DraftMode, NewDraftOp, WhoAmI, PublishResult, ReviewSummary } from '../types.js';
 
 /**
@@ -303,7 +303,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
   'threads:publish-review': async (payload, ctx): Promise<PublishResult> =>
     publish(await resolveCaller(ctx, payload, { write: true }), ctx, parseReviewFields('threads:publish-review', payload), {
       store: getStore(ctx),
-      sync: defaultSync(ctx),
+      sync: getSync(ctx),
     }),
 
   /** Title and summary of the caller's open review. */
@@ -315,6 +315,6 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
   /** Take a review back: reverse a published one from its manifest, or empty the caller's open one. */
   'threads:discard-review': async (payload, ctx): Promise<{ discarded: true }> => {
     const caller = await begin(ctx, payload, 'threads:discard-review', ['reviewId']);
-    return discard(caller, ctx, payload.reviewId, { store: getStore(ctx), sync: defaultSync(ctx) });
+    return discard(caller, ctx, payload.reviewId, { store: getStore(ctx), sync: getSync(ctx) });
   },
 };

@@ -6,7 +6,7 @@
 
 export type ThreadsErrorCode =
   | 'not-found' | 'invalid' | 'config' | 'empty-review' | 'limit-chars' | 'rate-limited'
-  | 'unauthenticated' | 'no-identity-source';
+  | 'unauthenticated' | 'no-identity-source' | 'push-failed';
 
 const PREFIX = /^threads\/([a-z][a-z-]*): ([\s\S]*)$/;
 
