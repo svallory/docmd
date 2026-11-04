@@ -60,7 +60,7 @@ const apply = (ops: DraftOp[], content = PAGE, name = 'Alice') =>
 const rows: Array<{ name: string; author?: string; ops: NewDraftOp[]; changes: RegExp }> = [
   { name: 'add-comment', ops: [{ kind: 'add-comment', file: FILE, threadId: 't-2', commentId: 'c-r', parentId: 'c-3', body: 'R' }], changes: /c-r/ },
   { name: 'edit-comment', ops: [{ kind: 'edit-comment', file: FILE, threadId: 't-1', commentId: 'c-2', body: 'Changed' }], changes: /Changed/ },
-  { name: 'delete-comment (original position)', ops: [{ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-1' }], changes: /^(?![\s\S]*First)/ },
+  { name: 'delete-comment (original position)', ops: [{ kind: 'delete-comment', file: FILE, threadId: 't-1', commentId: 'c-2' }], changes: /^(?![\s\S]*Second)/ },
   { name: 'delete-thread (thread and highlight)', ops: [{ kind: 'delete-thread', file: FILE, threadId: 't-1' }], changes: /^(?![\s\S]*thread t-1)/ },
   { name: 'resolve-thread', ops: [{ kind: 'resolve-thread', file: FILE, threadId: 't-2' }], changes: /resolved "Alice"/ },
   { name: 'toggle-reaction (add)', ops: [{ kind: 'toggle-reaction', file: FILE, threadId: 't-1', commentId: 'c-2', emoji: '🎉' }], changes: /🎉/ },
