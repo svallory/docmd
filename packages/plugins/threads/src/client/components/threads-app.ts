@@ -845,6 +845,8 @@ export class ThreadsApp extends LitElement {
       if (existing) { void existing.refresh(); return; }
       panelBody.textContent = '';
       const reviews = document.createElement('threads-reviews-panel');
+      // A quote link to the exact URL already open fires no hashchange: reveal the thread again.
+      reviews.addEventListener('reveal-thread', () => { this.deepLinkDone = false; this.handleDeepLink(); });
       reviews.addEventListener('reviews-changed', (e) => {
         // The reload below re-enters this method, which refreshes the mounted Reviews panel.
         e.preventDefault();
