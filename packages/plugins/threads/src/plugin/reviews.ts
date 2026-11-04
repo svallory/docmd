@@ -277,9 +277,9 @@ export interface ReverseResult {
  * recorded. Ops whose target is gone are skipped with a reason. Idempotent (C-16): a second
  * run changes nothing, because every step sets a state (removes an id, restores a value,
  * inserts only when absent) rather than flipping one. `authorName` is the review author's
- * display name, needed to undo reactions; without it toggle-reaction ops are skipped.
+ * display name: reactions are stored by name and a manifest op does not carry it.
  */
-export function reverseOps(content: string, manifestOps: ManifestOp[], opts: { authorName?: string } = {}): ReverseResult {
+export function reverseOps(content: string, manifestOps: ManifestOp[], opts: { authorName: string }): ReverseResult {
   const threads: Thread[] = parser.parseThreadsFromContent(content);
   const skipped: ReverseResult['skipped'] = [];
   let text = content;
@@ -303,7 +303,8 @@ export function reverseOps(content: string, manifestOps: ManifestOp[], opts: { a
         if (!t) break;
         const idx = t.comments.findIndex((c) => c.id === op.commentId);
         if (idx < 0) { skip(`comment ${op.commentId} not found`); break; }
-        t.comments.splice(idx, 1);
+        const [gone] = t.comments.splice(idx, 1);
+        for (const c of t.comments) if (c.parent_id === gone.id) c.parent_id = gone.parent_id;
         changed = true;
         break;
       }
@@ -351,7 +352,7 @@ export function reverseOps(content: string, manifestOps: ManifestOp[], opts: { a
         if (!t) break;
         const c = t.comments.find((x) => x.id === op.commentId);
         if (!c) { skip(`comment ${op.commentId} not found`); break; }
-        if (!opts.authorName || typeof before?.present !== 'boolean') { skip('reaction author or before-state unknown'); break; }
+        if (typeof before?.present !== 'boolean') { skip('no recorded before-state'); break; }
         c.reactions ??= [];
         const r = c.reactions.find((x) => x.emoji === op.emoji);
         const present = !!r && r.authors.includes(opts.authorName);
@@ -436,6 +437,44 @@ export const summarize = (m: ReviewManifest): ReviewSummary => ({
 // Publish
 // ---------------------------------------------------------------------------
 
+/**
+ * Write every changed file, then run `finalWrite` (the manifest). A failure puts the files
+ * already written back; files that cannot be restored are named in a `threads/invalid` error.
+ */
+async function writeAllOrNothing(
+  ctx: ActionContext,
+  results: Array<{ file: string; original: string; next: string }>,
+  finalWrite: () => Promise<void>,
+  label: 'publish' | 'discard',
+): Promise<void> {
+  const written: typeof results = [];
+  try {
+    for (const r of results) {
+      if (r.next === r.original) continue;
+      written.push(r);
+      await ctx.writeFile(r.file, r.next);
+    }
+    await finalWrite();
+  } catch (e) {
+    const stuck: string[] = [];
+    for (const r of written.reverse()) {
+      try {
+        await ctx.writeFile(r.file, r.original);
+      } catch {
+        stuck.push(r.file);
+      }
+    }
+    if (stuck.length) {
+      throw new ThreadsError(
+        'invalid',
+        `${label} failed (${e instanceof Error ? e.message : String(e)}) and these files could not be restored, check them: ${stuck.join(', ')}`,
+        { cause: e },
+      );
+    }
+    throw e;
+  }
+}
+
 export interface PublishDeps {
   store: DraftStore;
   sync: Sync;
@@ -478,7 +517,7 @@ export async function publish(
     // Toggle targets come from the first read of each file and are reused by any retry of apply.
     const targetsByFile = new Map<string, Record<string, boolean>>();
 
-    if (earlier?.state === 'published') skipped = earlier.skipped;
+    if (earlier) skipped = earlier.skipped;
     else await sync.publishWithRetry(
       async () => {
         const applied: ManifestOp[] = [];
@@ -504,14 +543,7 @@ export async function publish(
         }
         applied.sort((a, b) => order.get(a.opId)! - order.get(b.opId)!);
 
-        // Write everything or nothing: a failure restores the files already written.
-        const written: typeof results = [];
-        try {
-          for (const r of results) {
-            if (r.next === r.original) continue;
-            written.push(r);
-            await ctx.writeFile(r.file, r.next);
-          }
+        await writeAllOrNothing(ctx, results, async () => {
           const title = 'title' in input ? input.title : journal.review.title;
           const summary = 'summary' in input ? input.summary : journal.review.summary;
           await writeManifest(ctx, {
@@ -526,30 +558,13 @@ export async function publish(
             ops: applied,
             skipped,
           });
-        } catch (e) {
-          const stuck: string[] = [];
-          for (const r of written.reverse()) {
-            try {
-              await ctx.writeFile(r.file, r.original);
-            } catch {
-              stuck.push(r.file);
-            }
-          }
-          if (stuck.length) {
-            throw new ThreadsError(
-              'invalid',
-              `publish failed (${e instanceof Error ? e.message : String(e)}) and these files could not be restored, check them: ${stuck.join(', ')}`,
-              { cause: e },
-            );
-          }
-          throw e;
-        }
+        }, 'publish');
       },
       { reviewId, authorKey: caller.key, authorName: caller.name, files },
     );
 
     // Drop what was published (ops added meanwhile stay) and start a fresh review.
-    if (earlier?.state === 'published') await finishEarlierPublish(ctx, store, caller.key, newId);
+    if (earlier) await finishEarlierPublish(ctx, store, caller.key, newId);
     else {
       const published = new Set(ops.map((o) => o.opId));
       await store.transact(caller.key, (j, at) => {
@@ -566,7 +581,7 @@ export async function publish(
  * drop the ops the manifest recorded (applied and skipped) and rotate the review id, so
  * ops still in the journal stand for what is really pending and later edits of the
  * published comments become real edit/delete ops. A no-op when the journal's review has no
- * published manifest.
+ * manifest (published or since discarded: a discard must not let the old ops be applied again).
  */
 export async function finishEarlierPublish(
   ctx: ActionContext,
@@ -575,7 +590,7 @@ export async function finishEarlierPublish(
   newId: (prefix: string) => string = (prefix) => prefix + crypto.randomBytes(4).toString('hex'),
 ): Promise<void> {
   const manifest = await readManifest(ctx, (await store.load(key)).review.id);
-  if (manifest?.state !== 'published') return;
+  if (!manifest) return;
   const done = new Set([...manifest.ops.map((o) => o.opId), ...manifest.skipped.map((x) => x.opId)]);
   await store.transact(key, (j, at) => {
     if (j.review.id !== manifest.id) return;
@@ -637,38 +652,13 @@ export async function discard(
           results.push({ file, original: content, next: result.content });
         }
 
-        const written: typeof results = [];
-        try {
-          for (const r of results) {
-            if (r.next === r.original) continue;
-            written.push(r);
-            await ctx.writeFile(r.file, r.next);
-          }
-          await writeManifest(ctx, {
-            ...manifest,
-            state: 'discarded',
-            discardedAt: new Date(now()).toISOString(),
-            discardedBy: caller.key,
-            discardSkipped,
-          });
-        } catch (e) {
-          const stuck: string[] = [];
-          for (const r of written.reverse()) {
-            try {
-              await ctx.writeFile(r.file, r.original);
-            } catch {
-              stuck.push(r.file);
-            }
-          }
-          if (stuck.length) {
-            throw new ThreadsError(
-              'invalid',
-              `discard failed (${e instanceof Error ? e.message : String(e)}) and these files could not be restored, check them: ${stuck.join(', ')}`,
-              { cause: e },
-            );
-          }
-          throw e;
-        }
+        await writeAllOrNothing(ctx, results, () => writeManifest(ctx, {
+          ...manifest,
+          state: 'discarded',
+          discardedAt: new Date(now()).toISOString(),
+          discardedBy: caller.key,
+          discardSkipped,
+        }), 'discard');
       },
       { reviewId, authorKey: caller.key, authorName: caller.name, files },
     );
