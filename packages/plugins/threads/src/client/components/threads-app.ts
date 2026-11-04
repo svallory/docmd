@@ -7,11 +7,14 @@ import { computeAnchor, getSelectionPosition, isWithinContent } from '../lib/sel
 import { initThemeBridge } from '../lib/theme';
 import { t } from '../lib/i18n';
 import { createSvgElement, getThreadSvg } from '../lib/icons';
+import { partitionThreads } from '../lib/reviews-view';
 
 import './threads-popover';
 import './threads-inline-editor';
 import './threads-identity';
 import './threads-publish-widget';
+import './threads-reviews-panel';
+import type { ThreadsReviewsPanel } from './threads-reviews-panel';
 import type { ThreadsPublishWidget } from './threads-publish-widget';
 
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
@@ -33,6 +36,8 @@ export class ThreadsApp extends LitElement {
   private deleteTarget: { type: 'thread' | 'comment'; id: string; threadId?: string } | null = null;
   private inlineEditorEl: HTMLElement | null = null;
   private publishWidget: ThreadsPublishWidget | null = null;
+  private panelTab: 'threads' | 'reviews' = 'threads';
+  private deepLinkDone = false;
 
   /** Whether sidebar mode is enabled via plugin config. Default: false (inline mode). */
   private get sidebarEnabled(): boolean {
@@ -312,6 +317,24 @@ export class ThreadsApp extends LitElement {
     this.scanRenderedHighlights();
     this.updateFabBadge();
     void this.publishWidget?.refresh();
+    this.handleDeepLink();
+  }
+
+  /** `#thread-<id>` on load: scroll the thread into view and flash it once; unknown ids do nothing. */
+  private handleDeepLink(): void {
+    if (this.deepLinkDone) return;
+    const m = /^#thread-(.+)$/.exec(location.hash);
+    if (!m) { this.deepLinkDone = true; return; }
+    const id = decodeURIComponent(m[1]!);
+    if (!this.threads.some(th => th.id === id)) return;
+    this.deepLinkDone = true;
+    const sel = `[data-thread-id="${CSS.escape(id)}"]`;
+    const target = document.querySelector<HTMLElement>(`mark.threads-highlight${sel}`)
+      ?? document.querySelector<HTMLElement>(`.threads-thread${sel}:not(.tc-panel .threads-thread)`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('threads-thread--flash');
+    setTimeout(() => target.classList.remove('threads-thread--flash'), 2000);
   }
 
   /** The publish widget exists only against a live server. */
@@ -770,6 +793,24 @@ export class ThreadsApp extends LitElement {
     header.appendChild(actionsDiv);
     panel.appendChild(header);
 
+    // Tabs: this page's threads / published reviews
+    const tabs = document.createElement('div');
+    tabs.className = 'tc-panel__tabs';
+    for (const [id, label] of [['threads', t('threads')], ['reviews', t('reviews')]] as const) {
+      const btn = document.createElement('button');
+      btn.className = 'tc-panel__tab';
+      btn.dataset['tab'] = id;
+      btn.dataset['testid'] = `tab-${id}`;
+      btn.textContent = label;
+      btn.setAttribute('aria-pressed', String(id === this.panelTab));
+      btn.addEventListener('click', () => {
+        this.panelTab = id;
+        this.populateSidebarPanel();
+      });
+      tabs.appendChild(btn);
+    }
+    panel.appendChild(tabs);
+
     // Panel body (thread cards go here)
     const body = document.createElement('div');
     body.className = 'tc-panel__body';
@@ -786,10 +827,26 @@ export class ThreadsApp extends LitElement {
     const panelBody = document.querySelector('.tc-panel__body');
     if (!panelBody) return;
 
+    document.querySelectorAll<HTMLElement>('.tc-panel__tab').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset['tab'] === this.panelTab)));
+
+    if (this.panelTab === 'reviews') {
+      const existing = panelBody.querySelector<ThreadsReviewsPanel>('threads-reviews-panel');
+      if (existing) { void existing.refresh(); return; }
+      panelBody.textContent = '';
+      const reviews = document.createElement('threads-reviews-panel');
+      reviews.addEventListener('reviews-changed', () => { void this.loadThreads(); });
+      panelBody.appendChild(reviews);
+      return;
+    }
+
     // Clear existing panel threads
     panelBody.textContent = '';
 
-    if (this.threads.length === 0) {
+    const { orphaned } = partitionThreads(this.threads);
+    const listed = this.threads.filter(th => !th.orphaned);
+
+    if (listed.length === 0 && orphaned.length === 0) {
       const emptyState = document.createElement('div');
       emptyState.className = 'tc-panel__empty';
       emptyState.innerHTML = `
@@ -801,8 +858,28 @@ export class ThreadsApp extends LitElement {
       `;
       panelBody.appendChild(emptyState);
     } else {
-      for (const thread of this.threads) {
+      for (const thread of listed) {
         panelBody.appendChild(this.renderThreadCard(thread, true));
+      }
+      if (orphaned.length > 0) {
+        const group = document.createElement('div');
+        group.className = 'tc-orphaned';
+        group.dataset['testid'] = 'orphaned-group';
+        const title = document.createElement('div');
+        title.className = 'tc-orphaned__title';
+        title.textContent = t('orphaned');
+        group.appendChild(title);
+        for (const thread of orphaned) {
+          const item = document.createElement('div');
+          item.className = 'tc-orphaned__item';
+          item.dataset['threadId'] = thread.id;
+          const q = document.createElement('span');
+          q.className = 'tc-orphaned__quote';
+          q.textContent = thread.anchor?.quote ?? '';
+          item.appendChild(q);
+          group.appendChild(item);
+        }
+        panelBody.appendChild(group);
       }
     }
 

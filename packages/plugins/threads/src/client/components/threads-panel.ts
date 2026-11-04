@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { t } from '../lib/i18n';
+import { partitionThreads } from '../lib/reviews-view';
 import type { Thread, Anchor } from '../../types';
 
 import '@shoelace-style/shoelace/dist/components/button/button.js';
@@ -10,8 +11,9 @@ import '@shoelace-style/shoelace/dist/components/divider/divider.js';
 
 import './threads-thread';
 import './threads-compose';
+import './threads-reviews-panel';
 
-type FilterType = 'all' | 'open' | 'resolved';
+type FilterType = 'all' | 'open' | 'resolved' | 'reviews';
 
 @customElement('threads-panel')
 export class ThreadsPanel extends LitElement {
@@ -28,6 +30,7 @@ export class ThreadsPanel extends LitElement {
 
   private get filteredThreads(): Thread[] {
     return this.threads.filter(t => {
+      if (t.orphaned) return false;
       if (this.filter === 'open') return !t.resolved;
       if (this.filter === 'resolved') return t.resolved;
       return true;
@@ -77,6 +80,7 @@ export class ThreadsPanel extends LitElement {
     if (!this.open) return nothing;
 
     const filtered = this.filteredThreads;
+    const orphaned = partitionThreads(this.threads).orphaned;
 
     const filterBtn = (f: FilterType, label: string) => html`
       <sl-button
@@ -112,9 +116,11 @@ export class ThreadsPanel extends LitElement {
           ${filterBtn('all', t('all'))}
           ${filterBtn('open', t('open'))}
           ${filterBtn('resolved', t('resolved'))}
+          ${filterBtn('reviews', t('reviews'))}
         </div>
 
         <div class="tc-panel__body">
+          ${this.filter === 'reviews' ? html`<threads-reviews-panel></threads-reviews-panel>` : html`
           ${this.composing ? html`
             <div class="tc-new-thread">
               <threads-compose
@@ -145,6 +151,15 @@ export class ThreadsPanel extends LitElement {
               .currentAuthor=${this.currentAuthor}
             ></threads-thread>
           `)}
+
+          ${orphaned.length > 0 ? html`
+            <div class="tc-orphaned" data-testid="orphaned-group">
+              <div class="tc-orphaned__title">${t('orphaned')}</div>
+              ${orphaned.map(thread => html`
+                <div class="tc-orphaned__item" data-thread-id=${thread.id}>
+                  <span class="tc-orphaned__quote">${thread.anchor?.quote ?? ''}</span>
+                </div>`)}
+            </div>` : nothing}`}
         </div>
       </div>
     `;
