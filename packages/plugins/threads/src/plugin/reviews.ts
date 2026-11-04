@@ -77,6 +77,8 @@ export interface ApplyOptions {
   reviewId: string;
   /** Desired end state per opId for resolve-thread (resolved) and toggle-reaction (present); see deriveTargets. */
   targets?: Record<string, boolean>;
+  /** Header callers: skip a delete of a thread's opening comment while others' replies exist (payload callers are not enforced). */
+  enforce?: boolean;
 }
 
 export interface ApplyResult {
@@ -214,7 +216,7 @@ export function applyOps(content: string, ops: DraftOp[], opts: ApplyOptions): A
       case 'delete-comment': {
         const idx = thread ? thread.comments.findIndex((c) => c.id === op.commentId) : -1;
         if (!thread || idx < 0) { skip(op, thread ? `comment ${op.commentId} not found` : `thread ${op.threadId} not found`); break; }
-        if (idx === 0 && thread.comments.length > 1) { skip(op, 'opening comment has replies; delete the thread'); break; }
+        if (opts.enforce && idx === 0 && thread.comments.some((c, i) => i > 0 && c.reviewId !== opts.reviewId)) { skip(op, 'opening comment has replies; delete the thread'); break; }
         const [removed] = thread.comments.splice(idx, 1);
         changed = true;
         done(op, { before: { comment: removed, index: idx } });
@@ -583,7 +585,7 @@ export async function publish(
           titles[file] = pageTitleOf(content);
           if (!targetsByFile.has(file)) targetsByFile.set(file, deriveTargets(content, fileOps, caller.name));
           const targets = targetsByFile.get(file)!;
-          const result = applyOps(content, fileOps, { authorKey: caller.key, authorName: caller.name, reviewId, targets });
+          const result = applyOps(content, fileOps, { authorKey: caller.key, authorName: caller.name, reviewId, targets, enforce: caller.source === 'header' });
           applied.push(...result.applied);
           skipped.push(...result.skipped);
           results.push({ file, original: content, next: result.content });

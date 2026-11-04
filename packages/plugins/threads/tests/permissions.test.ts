@@ -70,6 +70,7 @@ const ctxFor = (key: string) => makeCtx(project.root, {
 const call = (name: string, key: string, payload: Record<string, unknown> = {}) =>
   (actions as Record<string, any>)[`threads:${name}`]({ file: project.file, ...payload }, ctxFor(key));
 const forbidden = (p: Promise<unknown>) => assert.rejects(p, /^ThreadsError: threads\/forbidden: /);
+const published = async (threadId: string) => (await call('get-threads', 'carol')).find((t: any) => t.id === threadId);
 const anchor = { quote: 'x', prefix: null, suffix: null, selector: null, offset: null, blockText: null };
 
 // alice's published thread: two comments by her (the second is a reply), in one published review
@@ -127,9 +128,22 @@ test('delete-comment on an opener whose only reply is the author\'s own draft is
   await call('add-comment', 'alice', { threadId: tH, body: 'my own reply' });
   const opener = (await call('get-threads', 'alice')).find((t: any) => t.id === tH).comments[0].id;
   await call('delete-comment', 'alice', { threadId: tH, commentId: opener });
+  await call('publish-review', 'alice'); // her own flat reply is written by the same publish and does not block the delete
+  assert.deepEqual((await published(tH)).comments.map((c: any) => c.body), ['my own reply']);
 });
 
-const published = async (threadId: string) => (await call('get-threads', 'carol')).find((t: any) => t.id === threadId);
+test('payload callers keep the single-comment opener delete, at draft and at publish', async () => {
+  const dev = (name: string, payload: Record<string, unknown>, who: string) =>
+    (actions as Record<string, any>)[`threads:${name}`]({ file: project.file, author: who, authorKey: who, ...payload }, makeCtx(project.root, { config: { src: 'docs' } }));
+  const t = await dev('add-thread', { body: 'opening', anchor }, 'pa');
+  await dev('publish-review', {}, 'pa');
+  await dev('add-comment', { threadId: t.id, body: 'flat reply' }, 'pb');
+  await dev('publish-review', {}, 'pb');
+  await dev('delete-comment', { threadId: t.id, commentId: t.comments[0].id }, 'pa');
+  await dev('publish-review', {}, 'pa');
+  assert.deepEqual((await published(t.id)).comments.map((c: any) => c.body), ['flat reply']);
+});
+
 
 test('a stale draft cannot delete an opener that has since gained a reply', async () => {
   const opener = (await published(tG)).comments[0].id;
