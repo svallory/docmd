@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import * as api from '../lib/api';
 import { t } from '../lib/i18n';
 import { createPublishTimer, widgetState, type PublishMode, type PublishTimer } from '../lib/mode';
@@ -87,9 +88,10 @@ export class ThreadsPublishWidget extends LitElement {
 
   private timer: PublishTimer | null = null;
 
+  /** generateScripts always injects it; a missing value means no config, so collect-only. */
   private get autoPublish(): false | { seconds: number; startOn: boolean } {
     const cfg = (window as any).__threads_config?.autoPublish;
-    return cfg === false ? false : (cfg ?? { seconds: 180, startOn: true });
+    return cfg && typeof cfg === 'object' ? cfg : false;
   }
 
   override connectedCallback(): void {
@@ -125,9 +127,11 @@ export class ThreadsPublishWidget extends LitElement {
     try {
       const me = await api.whoami();
       this.journal = me.journal;
+      this.error = null;
       this.orphanedMine = me.orphanedMine;
     } catch (err) {
       console.error('[threads] whoami failed:', err);
+      this.error = err instanceof api.ThreadsClientError ? err.text : t('loadFailed');
       return;
     }
     this.syncTimer();
@@ -139,6 +143,10 @@ export class ThreadsPublishWidget extends LitElement {
 
   private get pendingCount(): number {
     return this.journal?.ops.length ?? 0;
+  }
+
+  private get loaded(): boolean {
+    return this.journal !== null;
   }
 
   private syncTimer(): void {
@@ -155,7 +163,8 @@ export class ThreadsPublishWidget extends LitElement {
       const result = await api.publishReview();
       await this.refresh();
       if (result.skipped.length > 0) {
-        this.error = t('skippedOps').replace('{n}', String(result.skipped.length));
+        const n = result.skipped.length;
+        this.error = t(n === 1 ? 'skippedOpsOne' : 'skippedOps').replace('{n}', String(n));
       }
     } catch (err) {
       this.error = err instanceof api.ThreadsClientError ? err.text : t('publishFailed');
@@ -170,7 +179,7 @@ export class ThreadsPublishWidget extends LitElement {
       this.journal = await api.setMode(next);
       this.error = null;
     } catch (err) {
-      this.error = err instanceof api.ThreadsClientError ? err.text : t('publishFailed');
+      this.error = err instanceof api.ThreadsClientError ? err.text : t('modeFailed');
       return;
     }
     this.syncTimer();
@@ -181,7 +190,7 @@ export class ThreadsPublishWidget extends LitElement {
     const s = widgetState({
       autoPublish: ap !== false,
       mode: this.mode,
-      pendingCount: this.pendingCount,
+      pendingCount: this.loaded ? this.pendingCount : null,
       orphanedMine: this.orphanedMine,
       publishing: this.publishing,
       error: this.error,
@@ -194,20 +203,20 @@ export class ThreadsPublishWidget extends LitElement {
           ${auto ? html`<span class="tpw__pill tpw__pill--auto">${t('autoPublishing')}</span>` : nothing}
           <span class="tpw__count" data-testid="tpw-count">${s.label}</span>
           ${s.showPlayPause ? html`
-            <button class="tpw__pp" data-testid="tpw-playpause" title=${this.mode === 'auto' ? t('pause') : t('play')}
-              aria-label=${this.mode === 'auto' ? t('pause') : t('play')} @click=${() => void this.toggleMode()}>
+            <button class="tpw__pp" data-testid="tpw-playpause" data-mode=${this.mode} title=${t(s.playPauseAction)}
+              aria-label=${t(s.playPauseAction)} @click=${() => void this.toggleMode()}>
               <svg class="tpw__ring" viewBox="0 0 28 28" aria-hidden="true">
                 <circle class="tpw__ring-track" cx="14" cy="14" r="12"></circle>
-                ${s.ringRunning && this.remaining !== null ? html`
+                ${s.ringRunning && this.remaining !== null && this.journal ? keyed(this.journal.review.updatedAt, html`
                   <circle class="tpw__ring-bar" cx="14" cy="14" r="12"
-                    style="animation-duration:${Math.max(this.remaining, 1)}ms"></circle>` : nothing}
+                    style="animation-duration:${Math.max(this.remaining, 1)}ms"></circle>`) : nothing}
               </svg>
-              <span aria-hidden="true">${this.mode === 'auto' ? '⏸' : '▶'}</span>
+              <span aria-hidden="true">${s.playPauseAction === 'pause' ? '⏸' : '▶'}</span>
             </button>` : nothing}
           <button class="tpw__btn" data-testid="tpw-publish" ?disabled=${s.publishDisabled} @click=${() => void this.publish()}>${t('publish')}</button>
         </div>
         ${s.orphanLine ? html`<div class="tpw__line" data-testid="tpw-orphan">${s.orphanLine}</div>` : nothing}
-        ${this.error ? html`<div class="tpw__line tpw__line--error" data-testid="tpw-error">${this.error}</div>` : nothing}
+        ${s.errorLine ? html`<div class="tpw__line tpw__line--error" data-testid="tpw-error">${s.errorLine}</div>` : nothing}
       </div>
     `;
   }
