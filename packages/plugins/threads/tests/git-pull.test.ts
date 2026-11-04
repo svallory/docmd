@@ -27,6 +27,13 @@ after(() => {
 });
 beforeEach(() => trio.reset());
 
+/** Canned git for order checks: records the verb, answers just enough for a moved remote. */
+const fakeGit = (log: string[]): ExecFile => async (_file, args) => {
+  const rest = args.filter((a, i) => !(a === '-c' || args[i - 1] === '-c'));
+  log.push(rest[0]);
+  const stdout = rest[0] === 'rev-parse' ? (rest[1] === 'HEAD' ? 'a' : 'b') : rest[0] === 'diff' ? 'M\tdocs/index.md' : '';
+  return { stdout, stderr: '' };
+};
 const realExec = promisify(nodeExecFile) as unknown as ExecFile;
 /** Runs git for real and records each verb (credential config stripped) in `log`. */
 const recording = (log: string[]): ExecFile => (file, args, o) => {
@@ -84,11 +91,18 @@ test('a rebuild that fails is retried on the next pull, even when the remote did
   const { handle, rebuilds } = handleStub();
   let fail = true;
   handle.rebuild = async (files?: string[]) => { rebuilds.push(files); if (fail) { fail = false; throw new Error('build failed'); } };
-  await assert.rejects(pullOnce(handle), /build failed/);
-  await pullOnce(handle);
-  assert.deepEqual(rebuilds, [['docs/index.md'], ['docs/index.md']]);
-  await pullOnce(handle);
-  assert.equal(rebuilds.length, 2); // cleared once it resolved
+  const err = mock.method(console, 'error', () => {});
+  try {
+    await pullOnce(handle); // the build failure is logged as such, not thrown into the git-failure path
+    assert.match(String(err.mock.calls[0].arguments[0]), /^\[threads\] rebuild after pull failed: build failed/);
+    await pullOnce(handle);
+    assert.deepEqual(rebuilds, [['docs/index.md'], ['docs/index.md']]);
+    await pullOnce(handle);
+    assert.equal(rebuilds.length, 2); // cleared once it resolved
+  } finally {
+    err.mock.restore();
+    await pullOnce(handleStub().handle); // drain the pending set whatever happened, so no later test inherits it
+  }
 });
 
 test('a draft journal survives the reset', async () => {
@@ -104,10 +118,9 @@ test('the git work runs inside the lock and rebuild after it', async () => {
   const order: string[] = [];
   const inner = createLock();
   const lock = { withLock: <T>(fn: () => Promise<T>) => inner.withLock(async () => { order.push('enter'); try { return await fn(); } finally { order.push('exit'); } }) };
-  commitOn(trio.other, 'docs/index.md', 'lock case');
   const { handle } = handleStub();
   handle.rebuild = async () => void order.push('rebuild');
-  await pullOnce(handle, { lock, execFile: recording(order) });
+  await pullOnce(handle, { lock, execFile: fakeGit(order) });
   assert.deepEqual(order, ['enter', 'fetch', 'rev-parse', 'rev-parse', 'diff', 'reset', 'exit', 'rebuild']);
 });
 
@@ -117,7 +130,7 @@ test('a pull waits behind a publish holding the project lock (AC-6)', async () =
   const held = new Promise<void>((r) => (release = r));
   const publishing = getSync(ctx).withLock(() => held);
   const verbs: string[] = [];
-  const pulling = pullOnce(handleStub().handle, { execFile: recording(verbs) });
+  const pulling = pullOnce(handleStub().handle, { execFile: fakeGit(verbs) });
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(verbs, []);
   release();
