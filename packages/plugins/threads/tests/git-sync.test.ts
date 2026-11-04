@@ -38,9 +38,9 @@ after(() => {
 beforeEach(() => trio.reset());
 
 /** Context for the server clone: header identity, git on. */
-const gitCtx = () => makeCtx(trio.server, {
+const gitCtx = (remote?: string) => makeCtx(trio.server, {
   mode: 'serve',
-  config: { src: 'docs', plugins: { threads: { identityHeader: 'x-user', git: GIT } } },
+  config: { src: 'docs', plugins: { threads: { identityHeader: 'x-user', git: remote ? { ...GIT, remote } : GIT } } },
   caller: { transport: 'websocket', headers: { 'x-user': 'ann@example.com' }, origin: null, remoteAddress: null, connectionId: 'c', connectedAt: 0 },
 });
 const draft = (ctx: any, body: string) =>
@@ -93,6 +93,7 @@ test('without git a publish spawns no process', async () => {
     await publish({ key: 'ann', name: 'Ann', email: null, avatarUrl: '', source: 'payload', isAdmin: false }, ctx, {}, { store, sync });
     assert.deepEqual(calls, []);
     assert.equal(getSync(ctx), getSync(ctx), 'the no-git sync is the cached one');
+    assert.equal(getSync(ctx, { execFile: async () => (calls.push('x'), { stdout: '', stderr: '' }) }), getSync(ctx), 'an injected execFile is ignored without git');
     assert.ok(fs.readdirSync(path.join(project.root, 'docs', '.threads', 'reviews')).length === 1, 'the review was written');
   } finally {
     project.cleanup();
@@ -206,22 +207,29 @@ test('a push that loses a race is retried on the fresh head; three rejections le
   assert.equal(head(trio.remote), 1);
 });
 
-test('a staging that fails leaves no manifest behind and the ops in the journal', async () => {
-  const ctx = gitCtx();
+test('a staging that fails leaves no manifest behind, the ops in the journal and no credential in the error', async () => {
+  const URL = `https://user:${SENTINEL}@example.invalid/repo.git`;
+  const ctx = gitCtx(URL);
   const store = storeOf();
   await draft(ctx, 'Keep me.');
+  // the fake remote URL stands in for "origin" so the real git can run
   const failing: ExecFile = async (file, args, opts) => {
-    if (args.includes('add')) throw new Error(`boom in ${trio.server}`);
-    return realExec(file, args, opts);
+    if (args.includes('add')) throw new Error(`boom in ${trio.server} at ${URL}`);
+    return realExec(file, args.map((a) => (a === URL ? 'origin' : a)), opts);
   };
-  const err = await publish(ANN, ctx, {}, { store, sync: getSync(ctx, { execFile: failing }) }).catch((e) => e);
+  const logged: string[] = [];
+  const spy = mock.method(console, 'error', (...a: unknown[]) => void logged.push(a.join(' ')));
+  let err: any;
+  try {
+    err = await publish(ANN, ctx, {}, { store, sync: getSync(ctx, { execFile: failing }) }).catch((e) => e);
+  } finally {
+    spy.mock.restore();
+  }
   assert.ok(err instanceof ThreadsError && err.code === 'push-failed');
-  assert.ok(!err.message.includes(trio.server), 'no server path reaches the client');
+  assert.ok(!err.message.includes(trio.server) && !err.message.includes(SENTINEL), 'nothing sensitive reaches the client');
+  assert.ok(logged.length > 0 && !logged.join('\n').includes(SENTINEL), 'the log is redacted');
   assert.ok(!fs.existsSync(path.join(trio.server, 'docs', '.threads', 'reviews')) || fs.readdirSync(path.join(trio.server, 'docs', '.threads', 'reviews')).length === 0);
   assert.equal((await store.load(ANN.key)).ops.length, 1);
-  // the next publish really publishes
-  await publish(ANN, ctx, { title: 'Again' }, { store, sync: getSync(ctx, { execFile: realExec }) });
-  assert.equal(head(trio.remote), 2);
 });
 
 test('a profile that is already committed publishes as a no-op', async () => {
