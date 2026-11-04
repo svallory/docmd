@@ -41,7 +41,7 @@ export class ThreadsApp extends LitElement {
   private deleteTarget: { type: 'thread' | 'comment'; id: string; threadId?: string } | null = null;
   private inlineEditorEl: HTMLElement | null = null;
   private publishMount = createPublishMount<ThreadsPublishWidget>({
-    isLive: () => (typeof docmd !== 'undefined' && docmd.isLive ? docmd.isLive() : false),
+    isLive: () => docmd.isLive!(), // mountPublishWidget guards docmd and isLive before start()
     isConnected: () => this.isConnected,
     create: () => {
       const el = document.createElement('threads-publish-widget') as ThreadsPublishWidget;
