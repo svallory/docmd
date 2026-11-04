@@ -629,7 +629,7 @@ export async function publish(
  * drop the ops the manifest recorded (applied and skipped) and rotate the review id, so
  * ops still in the journal stand for what is really pending and later edits of the
  * published comments become real edit/delete ops. A no-op when the journal's review has no
- * manifest (published or since discarded: a discard must not let the old ops be applied again).
+ * manifest; finishes the reset for a published or discarded one (a discard must not let the old ops be applied again).
  */
 export async function finishEarlierPublish(
   ctx: ActionContext,
