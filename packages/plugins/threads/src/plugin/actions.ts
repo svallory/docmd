@@ -314,7 +314,7 @@ export const actions: Record<string, (payload: any, ctx: ActionContext) => Promi
 
   /** Take a review back: reverse a published one from its manifest, or empty the caller's open one. */
   'threads:discard-review': async (payload, ctx): Promise<{ discarded: true }> => {
-    if (typeof payload?.reviewId !== 'string' || !payload.reviewId) throw new ThreadsError('invalid', 'threads:discard-review: reviewId is required');
-    return discard(await resolveCaller(ctx, payload, { write: true }), ctx, payload.reviewId, { store: getStore(ctx), sync: defaultSync(ctx) });
+    const caller = await begin(ctx, payload, 'threads:discard-review', ['reviewId']);
+    return discard(caller, ctx, payload.reviewId, { store: getStore(ctx), sync: defaultSync(ctx) });
   },
 };
