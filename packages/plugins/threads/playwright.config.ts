@@ -17,10 +17,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm --filter @docmd/playground run dev --port 4175",
-    port: 4175,
+    command: "node e2e/serve-playground.mjs 4175",
+    url: "http://localhost:4175/",
     reuseExistingServer: !process.env["CI"],
-    timeout: 30_000,
-    cwd: "../../../", // monorepo root
+    timeout: 120_000,
+    cwd: ".", // this package
   },
 });

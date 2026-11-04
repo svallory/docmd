@@ -16,8 +16,14 @@ const __dirname = path.dirname(__filename);
 /** Path to the playground index.md used by the dev server. */
 const PLAYGROUND_INDEX = path.resolve(
   __dirname,
-  "../../../_playground/docs/index.md",
+  "../../../../_playground/docs/index.md",
 );
+
+if (!fs.existsSync(PLAYGROUND_INDEX)) {
+  throw new Error(
+    `e2e: playground page not found at ${PLAYGROUND_INDEX} (the site lives in the repo-root _playground/)`,
+  );
+}
 
 /** Snapshot another playground page a test will write to; the returned function restores it. */
 export function snapshotPlaygroundPage(name: string): () => void {
