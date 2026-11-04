@@ -2,7 +2,7 @@ import type { WhoAmI } from '../../types';
 import { canShow, type ShowAction, type ShowTarget } from './can-show';
 import { resolveIdentity, showContext, type IdentityMode } from './identity-mode';
 
-export { identityFromWhoami, resolveIdentity, showContext, type IdentityMode } from './identity-mode';
+export { identityFromWhoami, type IdentityMode } from './identity-mode';
 
 const STORAGE_KEY_NAME = 'threads_author';
 const STORAGE_KEY_EMAIL = 'threads_email';
