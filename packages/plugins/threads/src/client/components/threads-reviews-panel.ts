@@ -93,8 +93,9 @@ export class ThreadsReviewsPanel extends LitElement {
     const a = e.currentTarget as HTMLAnchorElement;
     const url = new URL(a.href, location.href);
     if (url.pathname !== location.pathname || url.hash !== location.hash) return;
-    e.preventDefault();
-    this.dispatchEvent(new CustomEvent('reveal-thread', { bubbles: true, composed: true }));
+    // The host cancels the event when it reveals the thread; without a host the link keeps its default.
+    const handled = !this.dispatchEvent(new CustomEvent('reveal-thread', { bubbles: true, composed: true, cancelable: true }));
+    if (handled) e.preventDefault();
   }
 
   private renderForm() {

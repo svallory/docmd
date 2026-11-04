@@ -36,6 +36,18 @@ const FIXTURE_INDEX = path.resolve(__dirname, "fixtures/playground-index.md");
 export async function cleanThreads(_page: Page): Promise<void> {
   const fixtureContent = fs.readFileSync(FIXTURE_INDEX, "utf-8");
   fs.writeFileSync(PLAYGROUND_INDEX, fixtureContent, "utf-8");
+  // Drafts live in the journal, not the markdown: an unpublished op would ride into the next test's publish.
+  fs.rmSync(path.join(path.dirname(PLAYGROUND_INDEX), ".threads", "drafts", "TestUser.json"), { force: true });
+}
+
+/** Snapshot the published-review manifests; the returned function deletes those created since. */
+export function snapshotReviews(): () => void {
+  const dir = path.join(path.dirname(PLAYGROUND_INDEX), ".threads", "reviews");
+  const list = () => (fs.existsSync(dir) ? fs.readdirSync(dir) : []);
+  const before = new Set(list());
+  return () => {
+    for (const f of list()) if (!before.has(f)) fs.rmSync(path.join(dir, f), { force: true });
+  };
 }
 
 /** Publish the open review of `author` (comments are drafts until published); an empty review rejects. */
