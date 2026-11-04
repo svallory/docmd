@@ -18,8 +18,7 @@ test.afterEach(async ({ page }) => {
   await cleanThreads(page);
 });
 
-// fixme: docmd-48f.19 - the publish widget never mounts (threads-app checks docmd.isLive() before the socket opens); remove with the plugin fix.
-test.fixme("a comment counts as unpublished until Publish, and the widget sits bottom-right", async ({ page }) => {
+test("a comment counts as unpublished until Publish, and the widget sits bottom-right", async ({ page }) => {
   const widget = page.locator("threads-publish-widget");
   await expect(widget).toBeVisible();
   const box = (await widget.boundingBox())!;
