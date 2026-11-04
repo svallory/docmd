@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import type { Thread, Comment, Anchor, AuthorsMap } from '../../types';
 import * as api from '../lib/api';
 import { initIdentity, getIdentityPayload, canShowFor } from '../lib/identity';
+import { deleteCommentTarget } from '../lib/can-show';
 import { computeAnchor, getSelectionPosition, isWithinContent } from '../lib/selection';
 import { initThemeBridge } from '../lib/theme';
 import { t } from '../lib/i18n';
@@ -31,6 +32,9 @@ export class ThreadsApp extends LitElement {
   @state() private popoverX = 0;
   @state() private popoverY = 0;
 
+  /** Settles once `whoami` has answered; nothing that renders buttons or may prompt for a name runs before. */
+  private identityReady: Promise<void> = Promise.resolve();
+  private identityKnown = false;
   private pendingAnchor: Anchor | null = null;
   private pendingBlockEl: HTMLElement | null = null;
   private deleteTarget: { type: 'thread' | 'comment'; id: string; threadId?: string } | null = null;
@@ -66,7 +70,8 @@ export class ThreadsApp extends LitElement {
     this.initSidebarColumn();
 
     // Who the caller is decides which buttons render and whether a name is ever asked: learn it first.
-    void initIdentity().then(() => {
+    this.identityReady = initIdentity(api.whoami).then(() => { this.identityKnown = true; });
+    void this.identityReady.then(() => {
       if (!this.isConnected) return;
       this.injectIdentityButton();
       this.loadThreads();
@@ -78,9 +83,11 @@ export class ThreadsApp extends LitElement {
     // Register afterReload handler for post-mutation continuity
     if (typeof docmd !== 'undefined' && docmd.afterReload) {
       docmd.afterReload('threads', () => {
-        this.loadThreads();
-        this.injectNewThreadButton();
-        this.updateFabBadge();
+        void this.identityReady.then(() => {
+          this.loadThreads();
+          this.injectNewThreadButton();
+          this.updateFabBadge();
+        });
       });
     }
   }
@@ -187,6 +194,8 @@ export class ThreadsApp extends LitElement {
   // ─── Selection popover ────────────────────────────────────────────
 
   private handleMouseUp = (e: MouseEvent): void => {
+    // Starting a thread asks for the caller's name: not before we know whether the server names them.
+    if (!this.identityKnown) return;
     const popover = this.querySelector('threads-popover');
     if (popover?.contains(e.target as Node)) return;
 
@@ -307,11 +316,14 @@ export class ThreadsApp extends LitElement {
   private handlePageMounted = (_e: CustomEvent): void => {
     this.popoverActive = false;
     this.deepLinkDone = false;
-    this.loadThreads();
-    this.injectNewThreadButton();
+    void this.identityReady.then(() => {
+      this.loadThreads();
+      this.injectNewThreadButton();
+    });
   };
 
   private async loadThreads(): Promise<void> {
+    await this.identityReady;
     try {
       const [threads, authors] = await Promise.all([
         api.fetchThreads(),
@@ -506,10 +518,9 @@ export class ThreadsApp extends LitElement {
 
         // Delete button: only when the server would accept it (a lone comment deletes the thread)
         const thread = this.threads.find(th => th.id === threadId);
-        const comment = thread?.comments.find(c => c.id === commentId);
         const deletable = totalComments === 1
           ? canShowFor('delete-thread', { authorKeys: (thread?.comments ?? []).filter(c => !c.draft).map(c => c.authorKey) })
-          : canShowFor('delete-comment', { authorKey: comment?.authorKey, drafted: !!comment?.draft });
+          : canShowFor('delete-comment', deleteCommentTarget(thread?.comments ?? [], commentId));
         if (deletable) {
         const delBtn = document.createElement('button');
         delBtn.className = 'threads-delete-btn';
@@ -1105,7 +1116,7 @@ export class ThreadsApp extends LitElement {
     actions.appendChild(replyBtn);
 
     // Delete button
-    if (canShowFor('delete-comment', { authorKey: comment.authorKey, drafted: !!comment.draft })) {
+    if (canShowFor('delete-comment', deleteCommentTarget(this.threads.find(th => th.id === threadId)?.comments ?? [], comment.id))) {
     const delBtn = document.createElement('button');
     delBtn.className = 'threads-delete-btn';
     delBtn.appendChild(createSvgElement('trash', 13));

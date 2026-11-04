@@ -18,6 +18,8 @@ export class ThreadsComment extends LitElement {
   override createRenderRoot() { return this; }
 
   @property({ type: Object }) comment!: Comment;
+  /** The opening comment of a thread with published replies: the server deletes the whole thread, admin only. */
+  @property({ type: Boolean }) isOpenerWithReplies = false;
   @property({ type: String }) currentAuthor: string | null = null;
   @property({ type: Boolean }) editing = false;
   @state() private showEmojiPicker = false;
@@ -27,6 +29,9 @@ export class ThreadsComment extends LitElement {
   /** Header mode asks the permission table; local mode keeps the display-name match. */
   private can(action: 'edit-comment' | 'delete-comment'): boolean {
     if (!isHeaderMode()) return this.comment.author === this.currentAuthor;
+    if (action === 'delete-comment' && this.isOpenerWithReplies && !this.comment.draft) {
+      return canShowFor(action, { authorKey: null, drafted: false });
+    }
     return canShowFor(action, { authorKey: this.comment.authorKey, drafted: !!this.comment.draft });
   }
 

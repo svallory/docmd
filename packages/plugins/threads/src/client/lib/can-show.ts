@@ -38,3 +38,19 @@ export function canShow(action: ShowAction, ctx: ShowContext, target: ShowTarget
       return mine(target.reviewAuthor);
   }
 }
+
+/**
+ * The target the server checks for a comment delete. The opening comment of a
+ * thread that has published replies deletes the whole thread and is admin only
+ * (`authorKey: null`); drafts are always the caller's own.
+ */
+export function deleteCommentTarget(
+  comments: Array<{ id: string; authorKey?: string | null; draft?: unknown }>,
+  commentId: string,
+): ShowTarget {
+  const c = comments.find((x) => x.id === commentId);
+  if (!c) return { authorKey: null };
+  if (c.draft) return { authorKey: c.authorKey, drafted: true };
+  const wholeThread = comments.filter((x) => !x.draft).length > 1 && comments[0]?.id === commentId;
+  return { authorKey: wholeThread ? null : c.authorKey, drafted: false };
+}
