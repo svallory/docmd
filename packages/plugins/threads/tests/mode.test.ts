@@ -81,6 +81,7 @@ const T0 = 1_000_000;
 
 test('timer: fires once at updatedAt + seconds', () => {
   const r = rig();
+  assert.equal(r.timer.totalMs(), 60_000);
   r.timer.update({ mode: 'auto', updatedAt: T0, pendingCount: 1 });
   assert.equal(r.timer.remainingMs(), 60_000);
   r.advance(59_999);

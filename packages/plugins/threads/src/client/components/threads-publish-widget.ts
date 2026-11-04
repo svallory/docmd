@@ -85,6 +85,9 @@ export class ThreadsPublishWidget extends LitElement {
   @state() private publishing = false;
   @state() private error: string | null = null;
   @state() private remaining: number | null = null;
+  /** Elapsed ms of the countdown when the ring was created; frozen per updatedAt so re-renders keep the style identical. */
+  private ringDelay = 0;
+  private ringKey: string | null = null;
 
   private timer: PublishTimer | null = null;
 
@@ -112,7 +115,11 @@ export class ThreadsPublishWidget extends LitElement {
           return () => window.clearTimeout(id);
         },
       });
-      this.timer.onFire(() => void this.publish());
+      this.timer.onFire(() => {
+        // Fired: nothing is scheduled until the next edit, so the ring must go.
+        this.remaining = null;
+        void this.publish();
+      });
     }
     // The owner (threads-app) calls refresh() on load and after every mutation.
   }
@@ -153,6 +160,13 @@ export class ThreadsPublishWidget extends LitElement {
     if (!this.timer || !this.journal) return;
     this.timer.update({ mode: this.mode, updatedAt: this.journal.review.updatedAt, pendingCount: this.pendingCount });
     this.remaining = this.timer.remainingMs();
+    const key = this.journal.review.updatedAt;
+    // No ring while unarmed (collect, paused, fired): the next one is created fresh and re-measured.
+    if (this.remaining === null) this.ringKey = null;
+    else if (key !== this.ringKey) {
+      this.ringKey = key;
+      this.ringDelay = Math.max(0, this.timer.totalMs() - this.remaining);
+    }
   }
 
   private async publish(): Promise<void> {
@@ -200,7 +214,6 @@ export class ThreadsPublishWidget extends LitElement {
       t,
     });
     const auto = s.variant === 'auto';
-    // Total and elapsed, not remaining: a re-render with the same updatedAt must not move the ring.
     const total = (ap ? ap.seconds : 0) * 1000;
     return html`
       <div class="tpw" data-variant=${s.variant}>
@@ -214,7 +227,7 @@ export class ThreadsPublishWidget extends LitElement {
                 <circle class="tpw__ring-track" cx="14" cy="14" r="12"></circle>
                 ${s.ringRunning && this.journal ? keyed(this.journal.review.updatedAt, html`
                   <circle class="tpw__ring-bar" cx="14" cy="14" r="12"
-                    style="animation-duration:${total}ms;animation-delay:-${Math.max(0, total - (this.remaining ?? 0))}ms"></circle>`) : nothing}
+                    style="animation-duration:${total}ms;animation-delay:-${this.ringDelay}ms"></circle>`) : nothing}
               </svg>
               <span aria-hidden="true">${s.playPauseAction === 'pause' ? '⏸' : '▶'}</span>
             </button>` : nothing}
