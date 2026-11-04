@@ -22,7 +22,7 @@ export async function cleanThreads(page: Page): Promise<void> {
   for (const { file, route } of PAGES) {
     const served = async () => (await (await page.request.get(route)).text()).includes('<mark class="threads-highlight"');
     fs.copyFileSync(path.join(snapshot, file), path.join(DOCS_DIR, file));
-    await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 10_000 }).toBe(false);
+    await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 5_000 }).toBe(false);
   }
 }
 
@@ -48,7 +48,7 @@ const servedHtml = (page: Page): Promise<string> =>
 export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
   const before = await servedHtml(page);
   const result = await page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
-  await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 15_000 }).not.toBe(before);
+  await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 5_000 }).not.toBe(before);
   return result;
 }
 
