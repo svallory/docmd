@@ -11,8 +11,9 @@
 
 import http from 'node:http';
 import { setup, writeFile, runTestFile } from '../shared.js';
-import { freePort, request, spawnServe, waitForHealthz, stopServe, exitWithin } from '../_lib/serve-harness.js';
+import { freePort, request, spawnServe, waitForHealthz, stopServe } from '../_lib/serve-harness.js';
 import { createMcpHandler } from '../../packages/core/dist/mcp/handler.js';
+import { mcpConfigConflict } from '../../packages/core/dist/commands/serve.js';
 import { createMcpHttpHandler } from '../../packages/core/dist/mcp/http.js';
 
 let passed = 0;
@@ -77,7 +78,7 @@ export const test = runTestFile({
       // Protocol behaviour.
       const i = await post(openPort, init);
       assert(i.status === 200 && /^application\/json/.test(i.headers['content-type']) && i.json?.result?.serverInfo?.name === 'docmd-mcp-server',
-        'initialize: 200 JSON with serverInfo.name docmd-mcp-server');
+        'initialize: 200 JSON with serverInfo.name docmd-mcp-server (also AC-29: no Origin is 200 on an allow-listed server)');
       assert(i.headers['mcp-session-id'] === undefined, 'initialize: no Mcp-Session-Id header is issued');
 
       const l = await post(openPort, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
@@ -125,13 +126,24 @@ export const test = runTestFile({
       // Origin (AC-29).
       assert((await post(openPort, init, { Origin: 'http://evil.example' })).status === 403, 'origins [x]: foreign Origin is 403');
       assert((await post(openPort, init, { Origin: allowedOrigin })).status === 200, 'origins [x]: listed Origin is 200');
-      assert((await post(openPort, init)).status === 200, 'origins [x]: no Origin is 200');
       assert((await post(closedPort, init, { Origin: allowedOrigin })).status === 403, 'origins []: any Origin is 403');
       assert((await post(closedPort, init)).status === 200, 'origins []: no Origin is 200');
     } finally {
       open.closeAllConnections?.();
       closed.closeAllConnections?.();
       await Promise.all([new Promise((r) => open.close(r)), new Promise((r) => closed.close(r))]);
+    }
+
+    // serve.mcp vs --config (pure guard, no spawn).
+    {
+      const proj = setup('mcp-http-conflict');
+      writeFile(proj, 'docmd.config.json', '{}');
+      writeFile(proj, 'other.config.json', '{}');
+      const on = { serve: { mcp: { enabled: true } } };
+      assert(mcpConfigConflict('other.config.json', on, proj) !== null, 'mcp + --config naming another file is refused');
+      assert(mcpConfigConflict('docmd.config.js', on, proj) === null, 'mcp + default config is allowed');
+      assert(mcpConfigConflict('./docmd.config.json', on, proj) === null, 'mcp + --config naming the default file is allowed');
+      assert(mcpConfigConflict('other.config.json', { serve: { mcp: { enabled: false } } }, proj) === null, 'mcp off never conflicts');
     }
 
     // Wiring through the real command.
@@ -155,14 +167,6 @@ export const test = runTestFile({
       } finally {
         await stopServe(handle);
       }
-
-      // A custom --config would make /mcp read a different src/exclude: refuse to start.
-      writeFile(wired, 'other.config.json', JSON.stringify({
-        title: 'T', out: 'site', url: 'https://example.test', serve: { mcp: { enabled: true } },
-      }));
-      const refused = spawnServe(wired, ['--config', 'other.config.json', '--port', String(await freePort())]);
-      const exit = await exitWithin(refused, 15000);
-      assert(!exit.timedOut && exit.code !== 0 && /serve\.mcp requires the default/.test(refused.output.text), 'serve: mcp enabled with --config refuses to start');
     }
   }
 });
