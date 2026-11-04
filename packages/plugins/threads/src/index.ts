@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { setup as setupContainers } from './plugin/containers.js';
 import { setup as setupHighlightRule } from './plugin/highlight-rule.js';
 import { actions } from './plugin/actions.js';
+import { startPullLoop } from './plugin/git-sync.js';
 import { assertRuntime, normalizeOptions } from './plugin/config.js';
 import { scriptLiteral } from '@docmd/utils';
 import type { PluginDescriptor, ServerHandle } from '@docmd/api';
@@ -96,6 +97,7 @@ export async function onServerReady(handle: ServerHandle): Promise<void> {
   const opts = normalizeOptions(handle.config?.plugins?.threads);
   assertRuntime(opts, process.env);
   console.log(`[threads] ready${opts.identityHeader ? `, identity header: ${opts.identityHeader}` : ''}${opts.git ? ', git sync on' : ''}`);
+  if (opts.git) handle.onShutdown(startPullLoop(handle));
 }
 
 export { actions };
