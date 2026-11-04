@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,18 +32,34 @@ export function snapshotPlaygroundPage(name: string): () => void {
   return () => fs.writeFileSync(file, original, "utf-8");
 }
 
-/** Path to the fixture copy of the original playground markdown. */
-const FIXTURE_INDEX = path.resolve(__dirname, "fixtures/playground-index.md");
+/** The pages the specs write to, with the route each is served on. */
+const PAGES: Array<[file: string, route: string]> = [
+  ["index.md", "/"],
+  ["mermaid-preview.md", "/mermaid-preview/"],
+];
 
 /**
- * Restore the playground markdown to its fixture state, removing any
- * dynamically-added threads/highlights from test runs.
+ * Restore the playground markdown to the pages global-setup snapshotted, removing any
+ * dynamically-added threads/highlights from test runs, and wait until the dev server serves them clean.
+ * The dev server drops file events for a second after each rebuild, so a restore can be missed: it is rewritten until served.
  */
-export async function cleanThreads(_page: Page): Promise<void> {
-  const fixtureContent = fs.readFileSync(FIXTURE_INDEX, "utf-8");
-  fs.writeFileSync(PLAYGROUND_INDEX, fixtureContent, "utf-8");
+export async function cleanThreads(page: Page): Promise<void> {
+  const snapshot = process.env["THREADS_E2E_SNAPSHOT"];
+  if (!snapshot) throw new Error("e2e: THREADS_E2E_SNAPSHOT is unset (global-setup did not run)");
   // Drafts live in the journal, not the markdown: an unpublished op would ride into the next test's publish.
   fs.rmSync(path.join(path.dirname(PLAYGROUND_INDEX), ".threads", "drafts", "TestUser.json"), { force: true });
+  for (const [file, route] of PAGES) {
+    const served = async () => (await (await page.request.get(route)).text()).includes('<mark class="threads-highlight"');
+    for (let attempt = 1; ; attempt++) {
+      fs.copyFileSync(path.join(snapshot, file), path.join(path.dirname(PLAYGROUND_INDEX), file));
+      try {
+        await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 4_000 }).toBe(false);
+        break;
+      } catch (e) {
+        if (attempt === 5) throw e;
+      }
+    }
+  }
 }
 
 /** Snapshot the published-review manifests; the returned function deletes those created since. */
@@ -56,9 +72,29 @@ export function snapshotReviews(): () => void {
   };
 }
 
-/** Publish the open review of `author` (comments are drafts until published); an empty review rejects. */
+/** The served HTML of the current page (the dev server re-renders it after each rebuild). */
+const servedHtml = (page: Page): Promise<string> =>
+  page.evaluate(async () => (await fetch(location.pathname + location.search, { cache: "no-store" })).text());
+
+/**
+ * Publish the open review of `author` (comments are drafts until published); an empty review rejects.
+ * Publishing writes the markdown and the dev server rebuilds asynchronously, so this resolves once the
+ * served page differs from before the publish: a reload right after would otherwise race the rebuild.
+ * The dev server drops file events for a second after each rebuild; if the publish landed in that window the
+ * page is rebuilt by appending a newline to its source (the next cleanThreads restores it).
+ */
 export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
-  return page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
+  const before = await servedHtml(page);
+  const sourceFile = await page.evaluate(() => document.body.dataset["sourceFile"]);
+  const result = await page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
+  const rebuilt = () => expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 4_000 }).not.toBe(before);
+  try {
+    await rebuilt();
+  } catch {
+    if (sourceFile) fs.appendFileSync(path.resolve(PLAYGROUND_INDEX, "../..", sourceFile), "\n");
+    await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 15_000 }).not.toBe(before);
+  }
+  return result;
 }
 
 /**
