@@ -7,9 +7,9 @@ const MAX = 30_000;
 
 // The app's mount decisions, with a fake socket probe and a fake document.
 function harness() {
-  const s = { live: false, connected: true, created: 0, removed: 0 };
+  const s = { live: false, connected: true, created: 0, removed: 0, probes: 0 };
   const mount = createPublishMount<{ id: number }>({
-    isLive: () => s.live,
+    isLive: () => { s.probes++; return s.live; },
     isConnected: () => s.connected,
     create: () => ({ id: ++s.created }),
     remove: () => { s.removed++; },
@@ -28,8 +28,10 @@ test('publish mount: mounts once when live flips, not again across a reconnect o
   assert.equal(s.created, 1);
   assert.equal(mount.waiting, false);
   s.live = false; t.mock.timers.tick(TICK * 4); s.live = true; t.mock.timers.tick(TICK * 4);
+  const probes = s.probes;
   mount.start();
   assert.equal(s.created, 1);
+  assert.equal(s.probes, probes, 'a started mount does not probe again');
 });
 
 test('publish mount: already live mounts at once and leaves nothing pending', () => {
