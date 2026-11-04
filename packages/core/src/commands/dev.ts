@@ -20,7 +20,7 @@ import { createOriginVerify } from '../utils/ws-origin-guard.js';
 import { createActionHost, type ActionHost } from '../server/action-host.js';
 import { TUI } from '@docmd/api';
 import { buildSite } from './build.js';
-import { createQuietWindow } from './dev-quiet-window.js';
+import { createWatchPipeline } from './dev-quiet-window.js';
 import { loadConfig } from '../utils/config-loader.js';
 import { createRequire } from 'module';
 import { wasWrittenByRpc } from '@docmd/api';
@@ -132,13 +132,11 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
   TUI.footer(TUI.blue);
 
   const watchers: nativeFs.FSWatcher[] = [];
-  let watcherBuilding = false;
-  let rebuildQueued = false;
 
   // Every content build (watcher or plugin-requested) goes through this
   // chain, so two builds never run at once on the same output dir and worker
   // pool. A watcher change that arrives during a plugin build simply chains
-  // behind it; `watcherBuilding` only collapses overlapping watcher requests.
+  // behind it; the watcher pipeline collapses overlapping watcher requests.
   let buildChain: Promise<void> = Promise.resolve();
   function runDevBuild(targetFiles: string[] | undefined, reloadAfter: boolean): Promise<void> {
     const run = buildChain.then(async () => {
@@ -149,15 +147,11 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
         targetFiles,
         workerPool
       });
-      contentQuietWindow.markRebuilt();
       if (reloadAfter) broadcastReload();
     });
     buildChain = run.catch(() => {});
     return run;
   }
-  let rebuildTimeout: any = null;
-  const pendingFiles = new Set<string>();
-  let pendingAsset = false;
   let lastConfigRebuildAt = 0;
   // Quiet windows after a rebuild to absorb phantom fs.watch events that
   // macOS emits for newly-written nearby files. The primary guard is the
@@ -167,16 +161,44 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
   //   - 2500ms after a full config rebuild — longer because the build
   //     cascades through every project file
   const CONTENT_QUIET_MS = 1000;
-  // A save inside the window is deferred to its end, not dropped.
-  const contentQuietWindow = createQuietWindow({
-    quietMs: CONTENT_QUIET_MS,
-    now: Date.now,
-    setTimer: (fn, ms) => setTimeout(fn, ms)
-  });
   const CONFIG_QUIET_MS = 2500;
   // Tracks each watched file's mtime+size signature so phantom fs.watch
   // events that don't actually mutate the file are silently ignored.
   const signatureTracker = new FileSignatureTracker();
+
+  // Quiet window -> signature gate -> debounce -> build. A save inside the
+  // window is deferred to its end, not dropped.
+  const contentWatch = createWatchPipeline({
+    quietMs: CONTENT_QUIET_MS,
+    debounceMs: 600, // rebuild fires 600ms after the user stops saving
+    now: Date.now,
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as any),
+    signatureChanged: (f) => signatureTracker.hasChanged(f),
+    isBlocked: () => Date.now() - lastConfigRebuildAt < CONFIG_QUIET_MS,
+    build: async (targets) => {
+      const rebuildElapsed = TUI.timer();
+      const label = !targets ? 'assets' : targets.length === 1 ? path.relative(CWD, targets[0]) : `${targets.length} files`;
+      const sp = TUI.spinner(`Rebuilding: ${label}`, TUI.blue);
+      try {
+        await runDevBuild(targets, false);
+        sp.done(`Rebuilt: ${label} in ${rebuildElapsed()}`, true);
+      } catch (error: any) {
+        sp.fail(`Rebuild: ${label}`, true);
+        TUI.error('Rebuild failed', error.message);
+        throw error;
+      }
+    },
+    onBuilt: ({ reload }) => { if (reload) broadcastReload(); },
+    onConfig: (filePath) => {
+      // Debounce config/nav reloads separately to collapse macOS multi-fire
+      if (configDebounce) clearTimeout(configDebounce);
+      configDebounce = setTimeout(() => {
+        configDebounce = null;
+        reloadConfigAndRebuild(filePath);
+      }, 400);
+    }
+  });
 
   // Resolved output dir for robust exclusion (never retrigger on build output)
   const resolvedOutputDir = path.resolve(CWD, config.out || 'site');
@@ -195,8 +217,8 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
       // Close all watchers
       watchers.forEach(w => w.close());
       watchers.length = 0;
-      if (rebuildTimeout) { clearTimeout(rebuildTimeout); rebuildTimeout = null; }
-      rebuildQueued = false;
+      // The full rebuild below covers anything still pending or deferred.
+      contentWatch.cancel();
       // Reload the config and swap the worker pool as a step ON the build
       // chain: any watcher or plugin build already running finishes first, and
       // none can start between the drain and the terminate.
@@ -216,6 +238,7 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
 
       // Full rebuild (through the shared chain, with the new pool)
       await runDevBuild(undefined, false);
+      contentWatch.markRebuilt();
 
       lastConfigRebuildAt = Date.now();
       // Reset the signature tracker: after a full rebuild the file
@@ -273,27 +296,12 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
 
       const watcher = nativeFs.watch(watchPath, { recursive: true }, (event, filename) => {
         if (!filename) return;
-        // Post-rebuild quiet period: stale fs.watch events are deferred until
-        // it passes, where the signature gate below drops the phantom ones.
-        contentQuietWindow.event(path.resolve(watchPath, filename), () => handleContentEvent(watchPath, filename));
-      });
-      watchers.push(watcher);
-    }
-
-    function handleContentEvent(watchPath: string, filename: string) {
-        if (Date.now() - lastConfigRebuildAt < CONFIG_QUIET_MS) return;
-
         const filePath = path.resolve(watchPath, filename);
 
         // Exclude build output dir (absolute path check — reliable across platforms)
         if (filePath.startsWith(resolvedOut + path.sep) || filePath === resolvedOut) return;
 
-        // Content-signature gate: ignore phantom events that don't actually
-        // mutate the file (Spotlight reindex, iCloud sync, Time Machine,
-        // macOS metadata reads, etc.). This is the primary defence.
-        if (!signatureTracker.hasChanged(filePath)) return;
-
-        // Common noise exclusions
+        // Common noise exclusions (before the quiet window, so noise is never deferred)
         if (
           filename.includes('.git') ||
           filename.includes('node_modules') ||
@@ -301,61 +309,19 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
           filename.includes('.DS_Store')
         ) return;
 
-        const isAsset = filePath.startsWith(path.resolve(paths.userAssetsDir));
         const isConfigOrNav =
           filename.includes('navigation.json') ||
           (filename.includes('docmd.config') && !filename.includes('docmd.config-'));
+        const kind = isConfigOrNav
+          ? 'config'
+          : filePath.startsWith(path.resolve(paths.userAssetsDir)) ? 'asset' : 'content';
 
-        if (isConfigOrNav) {
-          // Debounce config/nav reloads separately to collapse macOS multi-fire
-          if (configDebounce) clearTimeout(configDebounce);
-          configDebounce = setTimeout(() => {
-            configDebounce = null;
-            reloadConfigAndRebuild(filePath);
-          }, 400);
-          return;
-        }
-
-        // Debounce: wait until user stops making changes before rebuilding.
-        // Each new save resets this timer, so the build only runs after
-        // the last change — like Vite's approach.
-        // Every file changed since the last build is a target: events deferred
-        // past the quiet window arrive together, and keeping only the last
-        // one would lose the others' (already consumed) signature changes.
-        pendingFiles.add(filePath);
-        if (isAsset) pendingAsset = true;
-        if (rebuildTimeout) clearTimeout(rebuildTimeout);
-        rebuildTimeout = setTimeout(() => {
-          const executeBuildFn = async () => {
-            if (watcherBuilding) { rebuildQueued = true; return; }
-
-            const rebuildElapsed = TUI.timer();
-            const targets = [...pendingFiles];
-            const targetsAreAssets = pendingAsset;
-            pendingFiles.clear();
-            pendingAsset = false;
-            const label = targets.length === 1
-              ? path.relative(CWD, targets[0])
-              : `${targets.length} files`;
-            const sp = TUI.spinner(`Rebuilding: ${label}`, TUI.blue);
-            rebuildQueued = false;
-            watcherBuilding = true;
-            try {
-              await runDevBuild(targetsAreAssets ? undefined : targets, false);
-              sp.done(`Rebuilt: ${label} in ${rebuildElapsed()}`, true);
-              if (!targets.every(wasWrittenByRpc)) {
-                broadcastReload();
-              }
-            } catch (error: any) {
-              sp.fail(`Rebuild: ${label}`, true);
-              TUI.error('Rebuild failed', error.message);
-            } finally {
-              watcherBuilding = false;
-              if (rebuildQueued) executeBuildFn();
-            }
-          };
-          executeBuildFn();
-        }, 600); // 600ms: rebuild fires 600ms after user stops saving
+        // The quiet window and the content-signature gate (the primary defence
+        // against phantom events from Spotlight, iCloud, Time Machine, ...) run
+        // inside the pipeline. The RPC mark is read now: its TTL is short.
+        contentWatch.event(filePath, { kind, rpcWritten: wasWrittenByRpc(filePath) });
+      });
+      watchers.push(watcher);
     }
   }
 
@@ -421,7 +387,7 @@ export async function startDevServer(configPathOption: string, opts: any = {}) {
           verifyClient: createOriginVerify(),
           getWorkerPool: () => workerPool,
           resolvePaths: [__dirname],
-          rebuild: (files) => runDevBuild(files, true),
+          rebuild: async (files) => { await runDevBuild(files, true); contentWatch.markRebuilt(); },
         });
 
         const indexHtmlPath = path.join(paths.outputDir, 'index.html');
