@@ -26,6 +26,8 @@ export interface PublishTimer {
   update(input: PublishTimerInput): void;
   /** Ms until the pending fire, or `null` when nothing is scheduled. */
   remainingMs(): number | null;
+  /** The full countdown length in ms. */
+  totalMs(): number;
   onFire(cb: () => void): void;
   stop(): void;
 }
@@ -62,6 +64,7 @@ export function createPublishTimer({ seconds, now, schedule }: PublishTimerOptio
     remainingMs() {
       return fireAt === null ? null : Math.max(0, fireAt - now());
     },
+    totalMs: () => seconds * 1000,
     onFire(cb) {
       listeners.push(cb);
     },
