@@ -205,6 +205,7 @@ Cloud Relay securely sends AI requests to the provider you choose, so provider c
 ```bash
 docmd dev            # Start the local development server
 docmd build          # Build for production
+docmd serve          # Build once and serve in production
 docmd live           # Start the browser-based Live Editor
 docmd init           # Create a configuration file
 docmd doctor         # Check configuration and plugin status
@@ -213,10 +214,58 @@ docmd migrate        # Migrate from Docusaurus, VitePress, MkDocs, or Starlight
 docmd deploy         # Generate deployment configuration
 docmd mcp            # Run the MCP server over stdio
 docmd add <name>     # Install a plugin or template
-docmd stop           # Stop running docmd development servers
+docmd stop           # Stop running docmd dev/serve servers
 ```
 
 **See complete [CLI Commands →](https://docs.docmd.io/reference/cli-commands/)**
+
+### Production serving
+
+`docmd serve` builds the site once and serves it from a Node process, for running docmd behind a reverse proxy or in a container. It binds to `127.0.0.1:3000` unless told otherwise. Configure it with an optional `serve` section in your config file:
+
+```json
+{
+  "serve": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "actions": { "enabled": false, "origins": [] },
+    "mcp": { "enabled": false, "origins": [] }
+  }
+}
+```
+
+The values above are the defaults. For example, to listen on all interfaces with actions and MCP on:
+
+```json
+{
+  "serve": {
+    "host": "0.0.0.0",
+    "port": 3000,
+    "actions": { "enabled": true, "origins": ["https://docs.example.com"] },
+    "mcp": { "enabled": true }
+  }
+}
+```
+
+| Key                | Default       | Meaning                                                                 |
+| :----------------- | :------------ | :---------------------------------------------------------------------- |
+| `host`             | `127.0.0.1`   | Interface to bind                                                       |
+| `port`             | `3000`        | Port to listen on                                                       |
+| `actions.enabled`  | `false`       | Accept action requests from the allowed origins                                         |
+| `actions.origins`  | `[]`          | Allowed origins for actions. Required (non-empty) when actions are on   |
+| `mcp.enabled`      | `false`       | Expose the MCP server at `/mcp`                                         |
+| `mcp.origins`      | `[]`          | Allowed origins for MCP. A request with an `Origin` header not listed here is refused; a request without one is served |
+
+**Host and port precedence:** the CLI flags `--host` / `--port` win over the `DOCMD_HOST` and `PORT` environment variables, which win over `serve.host` / `serve.port`, which win over the defaults. `DOCMD_HOST` and `PORT` are the only environment variables `serve` reads; origins and feature toggles are config-only.
+
+**Origins:** `serve.actions.origins` must list full origins such as `https://docs.example.com`. `*` is not accepted, and `serve` refuses to start with actions enabled and no origins, or with an invalid origin.
+
+**Endpoints:**
+
+* `GET /healthz` returns `{"status":"ok","version":...}` once the server is up.
+* `POST /mcp` serves MCP over HTTP (JSON-RPC 2.0, no sessions, no SSE) when `serve.mcp.enabled` is `true`; otherwise it returns 404. With `serve.mcp.enabled`, `serve` refuses to start when `--config` names a file other than the default `docmd.config.*`, because the MCP tools read the default config.
+
+**Trust:** docmd has no built-in authentication. If your deployment puts an authenticating reverse proxy in front of `serve`, only that proxy may set identity headers on requests: `serve` passes request headers through unchanged and does not verify them, so make sure clients cannot reach the port directly.
 
 ## Plugins
 
