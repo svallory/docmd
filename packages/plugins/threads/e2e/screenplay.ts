@@ -63,6 +63,9 @@ export class NavigateTo implements Task<void> {
     await actor.page.goto(this.path);
     // Wait for threads-app to be present (plugin loaded)
     await actor.page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+    // The client ignores selections until `whoami` answers. It mounts the publish widget right after that
+    // (the e2e site is a live dev server), whatever headings the page has.
+    await actor.page.waitForSelector("threads-publish-widget", { state: "attached", timeout: 10_000 });
   }
 
   static path(path: string) {
@@ -153,12 +156,12 @@ export class StartThreadOn implements Task<void> {
     const editor = actor.page.locator("threads-inline-editor");
     await editor.waitFor({ state: "attached", timeout: 5_000 });
 
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
     await textarea.waitFor({ timeout: 5_000 });
     await textarea.fill(this.comment);
 
     // Submit
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
     await submitBtn.click();
 
     // Wait for editor to detach (submission complete)
@@ -183,11 +186,11 @@ export class AddNewThread implements Task<void> {
     const editor = actor.page.locator("threads-inline-editor");
     await editor.waitFor({ state: "attached", timeout: 5_000 });
 
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
     await textarea.waitFor({ timeout: 5_000 });
     await textarea.fill(this.body);
 
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
     await submitBtn.click();
 
     await editor.waitFor({ state: "detached", timeout: 10_000 });
@@ -215,11 +218,11 @@ export class ReplyToThread implements Task<void> {
     const editor = actor.page.locator("threads-inline-editor");
     await editor.waitFor({ state: "attached", timeout: 5_000 });
 
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
     await textarea.waitFor({ timeout: 5_000 });
     await textarea.fill(this.comment);
 
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
     await submitBtn.click();
 
     await editor.waitFor({ state: "detached", timeout: 10_000 });
@@ -235,7 +238,7 @@ export class SubmitWithKeyboard implements Task<void> {
     const editor = actor.page.locator("threads-inline-editor");
     await editor.waitFor({ state: "attached", timeout: 3_000 });
 
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
     await textarea.click();
 
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
@@ -252,7 +255,7 @@ export class CancelWithKeyboard implements Task<void> {
     const editor = actor.page.locator("threads-inline-editor");
     await editor.waitFor({ state: "attached", timeout: 3_000 });
 
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
     await textarea.click();
 
     await actor.page.keyboard.press("Escape");
@@ -299,7 +302,7 @@ export class TheInlineEditor implements Question<boolean> {
 
 export class TheDeleteDialog implements Question<boolean> {
   async answeredBy(actor: Actor): Promise<boolean> {
-    return actor.page.locator("wa-dialog#delete-dialog").isVisible();
+    return actor.page.locator("sl-dialog#delete-dialog").isVisible();
   }
 
   static isOpen() {

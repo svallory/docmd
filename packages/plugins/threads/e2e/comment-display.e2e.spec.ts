@@ -1,6 +1,9 @@
 /**
  * Comment display tests - adapted from old comment-display.e2e.spec.ts.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts: it reads the
+ * server-rendered cards, and with the sidebar on a second, Lit-rendered card per thread appears in the panel.
+ *
  * Changes from old plugin:
  * - Comments are server-rendered HTML (.threads-comment) not Lit components
  * - Server-rendered comments have .threads-comment__meta and .threads-comment__body

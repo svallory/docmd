@@ -2,8 +2,11 @@
  * Thread creation tests - adapted from old devtalk.e2e.spec.ts "discussions" block
  * and filters-general.e2e.spec.ts "general comments" block.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts: with the sidebar
+ * every card exists twice (hidden server copy, visible Lit panel copy), and these specs assert on the server card.
+ *
  * Changes from old plugin:
- * - No sidebar panel; threads are inline in the content area
+ * - Threads render as cards in the content, not only in a panel
  * - "Add comment" popover opens inline editor (not a panel compose form)
  * - "New Thread" button replaces "Add general comment" panel button
  * - WebSocket actions instead of HTTP API for verification
@@ -18,7 +21,7 @@ import {
   SelectText,
   TheHighlightCount,
 } from "./screenplay.ts";
-import { cleanThreads, setAuthor, waitForReload } from "./helpers.ts";
+import { clientKey, cleanThreads, publishReview, setAuthor, waitForReload } from "./helpers.ts";
 
 const contentSelector = "[data-docmd-content] p, .docmd-content p, article p, main p";
 
@@ -53,6 +56,8 @@ test.describe("creating threads via text selection", () => {
       StartThreadOn.on(contentSelector, textToSelect, "This needs clarification"),
     );
 
+    // v2: a comment is a draft until published; publish so the server renders it.
+    await publishReview(user.page, "TestUser", await clientKey(user.page));
     // Wait for page to reload with the new thread
     await waitForReload(user.page);
 
@@ -82,6 +87,8 @@ test.describe("creating threads via text selection", () => {
       StartThreadOn.on(contentSelector, textToSelect, "Highlight test"),
     );
 
+    // v2: a comment is a draft until published; publish so the server renders it.
+    await publishReview(user.page, "TestUser", await clientKey(user.page));
     await waitForReload(user.page);
 
     // At least one new highlight should have appeared
@@ -125,6 +132,8 @@ test.describe("creating general (unanchored) threads", () => {
 
     await user.perform(AddNewThread.withBody("A general observation"));
 
+    // v2: a comment is a draft until published; publish so the server renders it.
+    await publishReview(user.page, "TestUser", await clientKey(user.page));
     // After submission, the page should reload and show the new thread
     await waitForReload(user.page);
 
@@ -152,9 +161,20 @@ test.describe("creating general (unanchored) threads", () => {
     const highlightsBefore = await user.ask(TheHighlightCount.count());
 
     await user.perform(AddNewThread.withBody("No highlight expected"));
+    // v2: a comment is a draft until published; publish so the server renders the thread
+    await publishReview(user.page, "TestUser", await clientKey(user.page));
     await waitForReload(user.page);
 
-    // No new highlights should have appeared
+    // The unanchored thread rendered (a card on the page) ...
+    const threads = await user.page.evaluate(async () => {
+      const file = document.body.dataset["sourceFile"];
+      return docmd.call("threads:get-threads", { file });
+    });
+    const created = threads.find((t: any) => t.comments[0]?.body === "No highlight expected");
+    expect(created).toBeTruthy();
+    await expect(user.page.locator(`.threads-thread[data-thread-id="${created.id}"]`)).toHaveCount(1);
+
+    // ... and no new highlights appeared
     const highlightsAfter = await user.ask(TheHighlightCount.count());
     expect(highlightsAfter).toBe(highlightsBefore);
   });

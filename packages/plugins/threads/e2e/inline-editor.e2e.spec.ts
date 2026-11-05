@@ -1,10 +1,13 @@
 /**
  * Inline editor tests - adapted from old inline-editor.e2e.spec.ts.
  *
+ * Runs on the sidebar site (the default project), see playwright.config.ts; what it asserts does not depend on
+ * the sidebar being off.
+ *
  * Changes from old plugin:
  * - threads-inline-editor replaces devtalk-inline-editor
  * - "Add comment" popover replaces "Add to page" button
- * - No separate panel compose form; all editing is inline
+ * - No separate compose form; the editor opens inline
  */
 
 import { test, expect } from "@playwright/test";
@@ -16,7 +19,7 @@ import {
   CancelWithKeyboard,
   TheInlineEditor,
 } from "./screenplay.ts";
-import { cleanThreads, setAuthor, waitForReload } from "./helpers.ts";
+import { clientKey, cleanThreads, setAuthor, waitForReload } from "./helpers.ts";
 
 const contentSelector = "[data-docmd-content] p, .docmd-content p, article p, main p";
 
@@ -58,7 +61,7 @@ async function openInlineEditor(textToSelect: string): Promise<void> {
 async function typeInEditor(text: string): Promise<void> {
   const textarea = user.page
     .locator("threads-inline-editor")
-    .locator("wa-textarea")
+    .locator("sl-textarea")
     .locator("textarea");
   await textarea.fill(text);
 }
@@ -85,7 +88,7 @@ test.describe("inline editor basics", () => {
     await typeInEditor("Inline comment via selection");
 
     const editor = user.page.locator("threads-inline-editor");
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
     await submitBtn.click();
 
     await editor.waitFor({ state: "detached", timeout: 10_000 });
@@ -99,7 +102,7 @@ test.describe("inline editor basics", () => {
     expect(await user.ask(TheInlineEditor.isVisible())).toBe(true);
 
     const editor = user.page.locator("threads-inline-editor");
-    const cancelBtn = editor.locator("wa-button[appearance='outlined']");
+    const cancelBtn = editor.locator("sl-button[variant='neutral']");
     await cancelBtn.click();
 
     await editor.waitFor({ state: "detached", timeout: 5_000 });
@@ -112,7 +115,7 @@ test.describe("inline editor basics", () => {
     await openInlineEditor(textToSelect);
 
     const editor = user.page.locator("threads-inline-editor");
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
     await expect(submitBtn).toHaveAttribute("disabled", { timeout: 3_000 });
   });
 });
@@ -175,13 +178,13 @@ test.describe("inline editor validation", () => {
 
     const textarea = user.page
       .locator("threads-inline-editor")
-      .locator("wa-textarea")
+      .locator("sl-textarea")
       .locator("textarea");
     await textarea.fill("   ");
 
     const submitBtn = user.page
       .locator("threads-inline-editor")
-      .locator("wa-button[variant='brand']");
+      .locator("sl-button[variant='primary']");
     await expect(submitBtn).toHaveAttribute("disabled");
   });
 
@@ -193,7 +196,7 @@ test.describe("inline editor validation", () => {
 
     const textarea = user.page
       .locator("threads-inline-editor")
-      .locator("wa-textarea")
+      .locator("sl-textarea")
       .locator("textarea");
 
     await expect(textarea).toBeFocused({ timeout: 3_000 });
@@ -213,7 +216,7 @@ test.describe("inline editor submitting state", () => {
     await typeInEditor("Some comment text");
 
     const editor = user.page.locator("threads-inline-editor");
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
 
     await expect(submitBtn).toContainText("Submit");
   });
@@ -239,12 +242,22 @@ test.describe("inline editor submitting state", () => {
     await typeInEditor("Double-submit test comment");
 
     const editor = user.page.locator("threads-inline-editor");
-    const submitBtn = editor.locator("wa-button[variant='brand']");
+    const submitBtn = editor.locator("sl-button[variant='primary']");
 
     await submitBtn.click();
-    await submitBtn.click({ force: true }).catch(() => {});
+    await submitBtn.click({ force: true, timeout: 2_000 }).catch(() => {});
 
     await editor.waitFor({ state: "detached", timeout: 10_000 });
+
+    // Exactly one thread was drafted, not two
+    const adds = await user.page.evaluate(
+      async (authorKey) =>
+        (await docmd.call("threads:whoami", { author: "TestUser", authorKey })).journal.ops.filter(
+          (op: { kind: string }) => op.kind === "add-thread",
+        ).length,
+      await clientKey(user.page),
+    );
+    expect(adds).toBe(1);
   });
 });
 
@@ -259,7 +272,7 @@ test.describe("inline editor placeholder text", () => {
     await openInlineEditor(await getTextToSelect());
 
     const editor = user.page.locator("threads-inline-editor");
-    const textarea = editor.locator("wa-textarea").locator("textarea");
+    const textarea = editor.locator("sl-textarea").locator("textarea");
 
     await expect(textarea).toHaveAttribute("placeholder", "Write your comment...");
   });

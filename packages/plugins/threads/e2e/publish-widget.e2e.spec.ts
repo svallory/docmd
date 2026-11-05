@@ -3,7 +3,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { cleanThreads, setAuthor } from "./helpers.ts";
+import { CLIENT_KEY, cleanThreads, setAuthor } from "./helpers.ts";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -31,14 +31,15 @@ test("a comment counts as unpublished until Publish, and the widget sits bottom-
   if ((await pp.getAttribute("data-mode")) === "auto") await pp.click();
   await expect(pp).toHaveAttribute("data-mode", "collect");
 
-  await page.evaluate(() =>
+  await page.evaluate((authorKey) =>
     docmd.call("threads:add-thread", {
       file: document.body.dataset["sourceFile"],
       anchor: null,
       author: "TestUser",
-      authorKey: "TestUser",
+      authorKey,
       body: "widget journey",
     }),
+    CLIENT_KEY,
   );
   await page.reload();
   await expect(page.getByTestId("tpw-count")).toHaveText("1 unpublished comment");

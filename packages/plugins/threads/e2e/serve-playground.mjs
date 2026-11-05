@@ -1,6 +1,6 @@
 /**
  * Starts the repo-root `_playground` site on the workspace build of docmd (not
- * the `local-tars` install) with the threads plugin enabled with its sidebar (the reviews specs open it). The port is the required first CLI argument.
+ * the `local-tars` install) with the threads plugin enabled with its sidebar (the reviews specs open it), or without it when the second CLI argument is `inline`. The port is the required first CLI argument.
  *
  * docmd resolves the config's `src`/`out`, and the plugin its `.threads/` store, against the config's
  * directory, and the playground's own config does not enable threads. So the server runs from a temp
@@ -9,6 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,8 +19,10 @@ const repoRoot = path.resolve(here, "../../../..");
 const playgroundDocs = path.join(repoRoot, "_playground/docs");
 const docmd = path.join(repoRoot, "packages/core/dist/bin/docmd.js");
 const port = process.argv[2];
+// "inline" serves the threads plugin without its sidebar (cards sit inline after their block); the default has the sidebar.
+const sidebar = process.argv[3] !== "inline";
 if (!port) {
-  console.error("e2e: usage: serve-playground.mjs <port>");
+  console.error("e2e: usage: serve-playground.mjs <port> [inline]");
   process.exit(1);
 }
 
@@ -40,8 +43,23 @@ fs.mkdirSync(path.join(work, "node_modules/@docmd"), { recursive: true });
 fs.symlinkSync(path.resolve(here, ".."), path.join(work, "node_modules/@docmd/plugin-threads"), "dir");
 fs.writeFileSync(
   path.join(work, "docmd.config.json"),
-  JSON.stringify({ title: "threads e2e", src: "docs", out: "site", plugins: { threads: { sidebar: true } } }),
+  JSON.stringify({ title: "threads e2e", src: "docs", out: "site", plugins: { threads: { sidebar, limits: { commentsPerMinute: 1000 } } } }),
 );
+
+// docmd quietly moves to the next free port when its own is taken, and the e2e projects tell the two sites apart by port.
+// Probe the loopback and wildcard addresses separately: a listener on one does not always block a bind on the other.
+for (const host of ["127.0.0.1", "::"]) {
+  await new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", (err) => {
+      if (err.code !== "EADDRINUSE") return resolve(); // e.g. no IPv6 in this box
+      console.error(`e2e: port ${port} is not free on ${host}; refusing to start on another one`);
+      fs.rmSync(work, { recursive: true, force: true });
+      process.exit(1);
+    });
+    probe.listen(Number(port), host, () => probe.close(resolve));
+  });
+}
 
 const child = spawn(process.execPath, [docmd, "dev", "--cwd", work, "--port", port], { stdio: "inherit" });
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
