@@ -2,10 +2,12 @@
  * Reply and deletion tests - adapted from old editing-deletion.e2e.spec.ts
  * and devtalk.e2e.spec.ts "discussions" block.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts.
+ *
  * Changes from old plugin:
  * - No sidebar panel; threads are inline server-rendered cards
  * - Reply button on thread footer (not an always-visible reply textarea)
- * - Delete confirmation via wa-dialog#delete-dialog (same as before)
+ * - Delete confirmation via sl-dialog#delete-dialog (same as before)
  * - Seeding via docmd.call() instead of HTTP API
  * - Comment editing now handled by threads-comment Lit component with tc-* classes
  */
@@ -15,7 +17,7 @@ import {
   Actor,
   ReplyToThread,
 } from "./screenplay.ts";
-import { cleanThreads, setAuthor, seedAndReload, waitForReload, waitForClientProcessing } from "./helpers.ts";
+import { clientKey, cleanThreads, publishReview, setAuthor, seedAndReload, waitForReload, waitForClientProcessing } from "./helpers.ts";
 
 let user: Actor;
 
@@ -38,7 +40,7 @@ test.describe("reply to thread", () => {
     // stay in the hidden sidebar and the Reply button is not visible)
     const { id: threadId } = await seedAndReload(user.page, {
       body: "Thread for reply test",
-      anchor: { quote: "verify core engine" },
+      anchor: { quote: "manual integration playground" },
     });
 
     await waitForClientProcessing(user.page);
@@ -58,7 +60,7 @@ test.describe("reply to thread", () => {
     // Use anchored thread so it's visible inline
     const { id: threadId } = await seedAndReload(user.page, {
       body: "Thread for reply submission",
-      anchor: { quote: "verify core engine" },
+      anchor: { quote: "manual integration playground" },
     });
 
     await waitForClientProcessing(user.page);
@@ -69,7 +71,8 @@ test.describe("reply to thread", () => {
       ReplyToThread.on(threadSelector, "I agree with this"),
     );
 
-    // Wait for reload after the reply is submitted
+    // v2: the reply is a draft until published
+    await publishReview(user.page, "TestUser", await clientKey(user.page));
     await waitForReload(user.page);
 
     // Verify reply was persisted via API
@@ -108,7 +111,7 @@ test.describe("thread deletion", () => {
     // However, the delete functionality exists via the delete-dialog.
 
     // For now, verify the delete dialog mechanism works:
-    const dialog = user.page.locator("wa-dialog#delete-dialog");
+    const dialog = user.page.locator("sl-dialog#delete-dialog");
     await expect(dialog).toBeAttached();
   });
 
@@ -122,10 +125,10 @@ test.describe("thread deletion", () => {
       async ({ threadId }) => {
         const file = document.body.dataset["sourceFile"];
         await docmd.call("threads:delete-thread", { file, threadId, author: "TestUser" });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload triggered by file write
     await waitForReload(user.page);
@@ -159,10 +162,10 @@ test.describe("comment deletion", () => {
       async ({ threadId, commentId }) => {
         const file = document.body.dataset["sourceFile"];
         await docmd.call("threads:delete-comment", { file, threadId, commentId, author: "TestUser" });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId: replyId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload triggered by file write
     await waitForReload(user.page);
@@ -204,10 +207,10 @@ test.describe("comment editing", () => {
           body: newBody,
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId, newBody },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload triggered by file write
     await waitForReload(user.page);
@@ -230,9 +233,9 @@ test.describe("comment editing", () => {
 
     const commentId = comments[0].id;
 
-    // Attempt to edit with empty body - the API should reject it or the guard should prevent it
-    try {
-      await user.page.evaluate(
+    // Attempt to edit with empty body - the API must reject it
+    await expect(
+      user.page.evaluate(
         async ({ threadId, commentId }) => {
           const file = document.body.dataset["sourceFile"];
           await docmd.call("threads:edit-comment", {
@@ -242,13 +245,10 @@ test.describe("comment editing", () => {
             body: "",
             author: "TestUser",
           });
-          await docmd.call("threads:publish-review", { author: "TestUser" });
         },
         { threadId, commentId },
-      );
-    } catch {
-      // Expected - empty body should be rejected
-    }
+      ),
+    ).rejects.toThrow();
 
     // Verify original body unchanged
     const threads = await user.page.evaluate(async () => {

@@ -2,8 +2,11 @@
  * Thread resolve/unresolve tests - adapted from old devtalk.e2e.spec.ts
  * "thread behavior" block.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts: with the sidebar
+ * every card exists twice (hidden server copy, visible Lit panel copy), and these specs assert on the server card.
+ *
  * Changes from old plugin:
- * - No sidebar panel with visual resolve/unresolve buttons on server-rendered cards
+ * - Resolve/unresolve buttons are not on the server-rendered cards
  * - Resolve functionality exists at API level (threads:resolve-thread)
  * - Resolved threads get .threads-thread--resolved class (opacity: 0.55)
  * - The Lit-rendered threads-thread component has Resolve/Unresolve buttons,
@@ -12,7 +15,7 @@
 
 import { test, expect } from "@playwright/test";
 import { Actor } from "./screenplay.ts";
-import { cleanThreads, setAuthor, seedAndReload, waitForReload } from "./helpers.ts";
+import { cleanThreads, publishReview, setAuthor, seedAndReload, waitForReload } from "./helpers.ts";
 
 let user: Actor;
 
@@ -41,11 +44,11 @@ test.describe("resolve thread API", () => {
           resolved_by: "TestUser",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
         return __result;
       },
       { threadId },
     );
+    await publishReview(user.page, "TestUser");
 
     expect(resolved.resolved).toBeTruthy();
 
@@ -79,11 +82,11 @@ test.describe("resolve thread API", () => {
           resolved_by: "TestUser",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
         return __result;
       },
       { threadId },
     );
+    await publishReview(user.page, "TestUser");
 
     expect(unresolved.resolved).toBeFalsy();
   });

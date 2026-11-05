@@ -1,30 +1,62 @@
 /**
  * Basic UI tests - adapted from old devtalk.e2e.spec.ts "basic UI" describe block.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts.
+ *
  * Changes from old plugin:
  * - No sidebar panel/toggle button (inline-only architecture)
  * - threads-app replaces devtalk-app as root element
  * - "New Thread" button replaces sidebar toggle
  * - Threads rendered server-side with .threads-* classes
+ * - The playground index has no threads of its own: the file seeds two published, anchored threads once
+ *   (the tests only read them), and restores the page afterwards
  */
 
 import { test, expect } from "@playwright/test";
 import { Actor, NavigateTo } from "./screenplay.ts";
-import { setAuthor, waitForClientProcessing } from "./helpers.ts";
+import { cleanThreads, seedAndReload, setAuthor, waitForClientProcessing } from "./helpers.ts";
 
 
 
 let user: Actor;
+
+test.beforeAll(async ({ browser }, testInfo) => {
+  // cleanThreads plus two publishes (each polls up to 5 s per page) can outlast the default hook timeout.
+  testInfo.setTimeout(90_000);
+  const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
+  try {
+    await page.goto("/");
+    await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+    await setAuthor(page, "TestUser");
+    await cleanThreads(page);
+    await page.reload();
+    // v2: threads render server-side only once published; seed two published, anchored threads.
+    await seedAndReload(page, { body: "First seeded comment", anchor: { quote: "manual integration playground" } });
+    await seedAndReload(page, { body: "Second seeded comment", anchor: { quote: "latest release features" } });
+  } finally {
+    await page.close();
+  }
+});
 
 test.beforeEach(async ({ page }) => {
   user = new Actor("TestUser", page);
   await page.goto("/");
   await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
   await setAuthor(page, "TestUser");
-  // NOTE: Do NOT clean threads here - these tests verify the pre-existing
-  // threads from the playground markdown (index.md ::: threads block)
   // Wait for client-side JS to finish processing highlights
   await waitForClientProcessing(page);
+});
+
+test.afterAll(async ({ browser }, testInfo) => {
+  testInfo.setTimeout(60_000);
+  const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
+  try {
+    await page.goto("/");
+    await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
+    await cleanThreads(page);
+  } finally {
+    await page.close();
+  }
 });
 
 test.describe("threads plugin - basic UI", () => {
@@ -42,13 +74,12 @@ test.describe("threads plugin - basic UI", () => {
   });
 
   test("server-rendered threads appear with correct class structure", async () => {
-    // The playground index.md has pre-existing threads in the ::: threads block
+    // The seeded threads are published, so the server renders them
     await user.perform(NavigateTo.path("/"));
 
     // There should be thread cards rendered from the markdown
-    const threads = user.page.locator(".threads-thread[data-thread-id]");
-    const count = await threads.count();
-    expect(count).toBeGreaterThan(0);
+    const threads = user.page.locator(".threads-thread[data-thread-id]:visible");
+    await expect(threads).toHaveCount(2);
 
     // Each thread should have at least one comment
     const firstThread = threads.first();
@@ -61,8 +92,7 @@ test.describe("threads plugin - basic UI", () => {
 
     // The playground has ==highlighted text=={thread-id} in the markdown
     const highlights = user.page.locator("mark.threads-highlight[data-thread-id]");
-    const count = await highlights.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(highlights).toHaveCount(2);
   });
 
   test("highlights have cycling colors (not all the same)", async () => {
@@ -72,10 +102,8 @@ test.describe("threads plugin - basic UI", () => {
     const highlights = user.page.locator("mark.threads-highlight[data-thread-id]");
     const count = await highlights.count();
 
-    if (count < 2) {
-      test.skip(true, "Need at least 2 highlights to test color cycling");
-      return;
-    }
+    // The two seeded threads are anchored in the page: both must be highlighted
+    expect(count).toBe(2);
 
     // Collect all highlight color classes
     const colorClasses: string[] = [];
@@ -95,32 +123,18 @@ test.describe("threads plugin - basic UI", () => {
     await user.perform(NavigateTo.path("/"));
     await waitForClientProcessing(user.page);
 
-    // Find a highlight mark that has a corresponding thread card
+    // Both seeded quotes sit in the page's intro paragraph: each card must stack right after it
     const highlights = user.page.locator("mark.threads-highlight[data-thread-id]");
-    const firstHighlight = highlights.first();
+    await expect(highlights).toHaveCount(2);
+    const intro = user.page.locator("p", { hasText: "Welcome to the manual integration playground" }).first();
 
-    if ((await firstHighlight.count()) === 0) {
-      test.skip(true, "No highlights found on the page");
-      return;
+    for (let i = 0; i < 2; i++) {
+      const threadId = await highlights.nth(i).getAttribute("data-thread-id");
+      expect(threadId).toBeTruthy();
+      await expect(
+        intro.locator(`xpath=following-sibling::*[position()<=2][@data-thread-id="${threadId}"]`),
+      ).toHaveCount(1);
     }
-
-    const threadId = await firstHighlight.getAttribute("data-thread-id");
-    if (!threadId) return;
-
-    const threadCard = user.page.locator(`.threads-thread[data-thread-id="${threadId}"]`);
-    await expect(threadCard).toBeAttached();
-
-    // Thread card should appear after the highlight's parent block in document order
-    const isAfterHighlight = await user.page.evaluate(
-      ({ threadId }) => {
-        const mark = document.querySelector(`mark.threads-highlight[data-thread-id="${threadId}"]`);
-        const thread = document.querySelector(`.threads-thread[data-thread-id="${threadId}"]`);
-        if (!mark || !thread) return false;
-        return mark.compareDocumentPosition(thread) & Node.DOCUMENT_POSITION_FOLLOWING;
-      },
-      { threadId },
-    );
-    expect(isAfterHighlight).toBeTruthy();
   });
 
   test("thread cards have matching border colors to their highlights", async () => {
@@ -130,24 +144,21 @@ test.describe("threads plugin - basic UI", () => {
     const highlights = user.page.locator("mark.threads-highlight[data-thread-id]");
     const firstHighlight = highlights.first();
 
-    if ((await firstHighlight.count()) === 0) {
-      test.skip(true, "No highlights found");
-      return;
-    }
+    await expect(highlights).toHaveCount(2);
 
     const threadId = await firstHighlight.getAttribute("data-thread-id");
-    if (!threadId) return;
+    expect(threadId).toBeTruthy();
 
     // Get the highlight's color class
     const hlColorClass = await firstHighlight.evaluate((el) =>
       Array.from(el.classList).find((c) => c.startsWith("threads-hl-")),
     );
 
-    if (!hlColorClass) return;
+    expect(hlColorClass).toBeTruthy();
 
     // The thread card should have the matching border class
-    const expectedBorderClass = hlColorClass.replace("threads-hl-", "threads-border-");
-    const threadCard = user.page.locator(`.threads-thread[data-thread-id="${threadId}"]`);
+    const expectedBorderClass = hlColorClass!.replace("threads-hl-", "threads-border-");
+    const threadCard = user.page.locator(`.threads-thread[data-thread-id="${threadId}"]:visible`);
     const hasBorderClass = await threadCard.evaluate(
       (el, cls) => el.classList.contains(cls),
       expectedBorderClass,
@@ -162,16 +173,13 @@ test.describe("threads plugin - basic UI", () => {
     const highlights = user.page.locator("mark.threads-highlight[data-thread-id]");
     const firstHighlight = highlights.first();
 
-    if ((await firstHighlight.count()) === 0) {
-      test.skip(true, "No highlights found");
-      return;
-    }
+    await expect(highlights).toHaveCount(2);
 
     await firstHighlight.click();
 
-    // After clicking, the thread card should receive the flash class
+    // The click opens the side panel and flashes the thread's copy in it
     const threadId = await firstHighlight.getAttribute("data-thread-id");
-    const threadCard = user.page.locator(`.threads-thread[data-thread-id="${threadId}"]`);
+    const threadCard = user.page.locator(`.tc-panel__body .threads-thread[data-thread-id="${threadId}"]`);
     await expect(threadCard).toHaveClass(/threads-thread--flash/, { timeout: 2_000 });
   });
 
@@ -187,13 +195,10 @@ test.describe("threads plugin - basic UI", () => {
   test("reply buttons present on thread cards", async () => {
     await user.perform(NavigateTo.path("/"));
 
-    const threads = user.page.locator(".threads-thread[data-thread-id]");
+    const threads = user.page.locator(".threads-thread[data-thread-id]:visible");
     const count = await threads.count();
 
-    if (count === 0) {
-      test.skip(true, "No threads on page");
-      return;
-    }
+    expect(count).toBe(2);
 
     // Each thread should have a Reply button
     for (let i = 0; i < count; i++) {
@@ -207,10 +212,9 @@ test.describe("threads plugin - basic UI", () => {
   test("threads-sidebar container is hidden", async () => {
     await user.perform(NavigateTo.path("/"));
 
+    // The raw sidebar wrapper the markdown renders is there (threads are seeded) and must be hidden (display: none)
     const sidebar = user.page.locator(".threads-sidebar");
-    if ((await sidebar.count()) > 0) {
-      // The sidebar wrapper should be hidden (display: none)
-      await expect(sidebar).toBeHidden();
-    }
+    await expect(sidebar).toHaveCount(1);
+    await expect(sidebar).toBeHidden();
   });
 });

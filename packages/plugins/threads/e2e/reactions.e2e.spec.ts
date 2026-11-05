@@ -1,6 +1,9 @@
 /**
  * Emoji reaction tests - adapted from old reactions.e2e.spec.ts.
  *
+ * Runs against the inline site (threads plugin without its sidebar), see playwright.config.ts: with the sidebar
+ * every card exists twice (hidden server copy, visible Lit panel copy), and these specs assert on the server card.
+ *
  * Changes from old plugin:
  * - Reactions stored in markdown (not SQLite)
  * - Server-rendered reactions in .threads-reactions block
@@ -14,7 +17,7 @@
 
 import { test, expect } from "@playwright/test";
 import { Actor } from "./screenplay.ts";
-import { cleanThreads, setAuthor, seedAndReload, waitForReload } from "./helpers.ts";
+import { cleanThreads, publishReview, setAuthor, seedAndReload, waitForReload } from "./helpers.ts";
 
 let user: Actor;
 
@@ -46,11 +49,11 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
         return __result;
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     expect(reactions).toBeTruthy();
     expect(reactions.length).toBe(1);
@@ -76,10 +79,10 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload after file write
     await waitForReload(user.page);
@@ -95,11 +98,11 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
         return __result;
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Reaction should be removed
     const thumbsReaction = reactions.find((r: any) => r.emoji === "\ud83d\udc4d");
@@ -124,10 +127,10 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload
     await waitForReload(user.page);
@@ -143,11 +146,11 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83c\udf89",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
         return __result;
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     expect(reactions.length).toBe(2);
     expect(reactions.find((r: any) => r.emoji === "\ud83d\udc4d")).toBeTruthy();
@@ -172,10 +175,10 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload
     await waitForReload(user.page);
@@ -214,10 +217,10 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Wait for hot-reload
     await waitForReload(user.page);
@@ -233,11 +236,11 @@ test.describe("emoji reactions API", () => {
           emoji: "\ud83d\udc4d",
           author: "Alice",
         });
-        await docmd.call("threads:publish-review", { author: "Alice" });
         return __result;
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "Alice");
 
     const thumbs = reactions.find((r: any) => r.emoji === "\ud83d\udc4d");
     expect(thumbs).toBeTruthy();
@@ -267,10 +270,10 @@ test.describe("server-rendered reactions", () => {
           emoji: "\ud83d\udc4d",
           author: "TestUser",
         });
-        await docmd.call("threads:publish-review", { author: "TestUser" });
       },
       { threadId, commentId },
     );
+    await publishReview(user.page, "TestUser");
 
     // Reload to see server-rendered HTML
     await waitForReload(user.page);
@@ -278,9 +281,7 @@ test.describe("server-rendered reactions", () => {
     const thread = user.page.locator(`.threads-thread[data-thread-id="${threadId}"]`);
     const reactionsBlock = thread.locator(".threads-reactions");
 
-    // If reactions are rendered server-side, the block should be present
-    if ((await reactionsBlock.count()) > 0) {
-      await expect(reactionsBlock).toContainText("\ud83d\udc4d");
-    }
+    // The server renders the reactions block on the card
+    await expect(reactionsBlock).toContainText("\ud83d\udc4d");
   });
 });

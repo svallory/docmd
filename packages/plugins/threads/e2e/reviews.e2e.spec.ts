@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { cleanThreads, publishReview, setAuthor, snapshotReviews } from "./helpers.ts";
+import { CLIENT_KEY, cleanThreads, publishReview, setAuthor, snapshotReviews } from "./helpers.ts";
 
 let restoreReviews: () => void;
 
@@ -28,21 +28,21 @@ const firstWords = () =>
 
 async function seedDraft(page: import("@playwright/test").Page, quote: string, body: string): Promise<void> {
   await page.evaluate(
-    ({ quote, body }) =>
+    ({ quote, body, authorKey }) =>
       docmd.call("threads:add-thread", {
         file: document.body.dataset["sourceFile"],
         anchor: { quote, prefix: null, suffix: null, selector: null, offset: null, blockText: null },
         author: "TestUser",
-        authorKey: "TestUser",
+        authorKey,
         body,
       }),
-    { quote, body },
+    { quote, body, authorKey: CLIENT_KEY },
   );
 }
 
 async function seedAndPublish(page: import("@playwright/test").Page, quote: string, body: string): Promise<string> {
   await seedDraft(page, quote, body);
-  return (await publishReview(page)).reviewId;
+  return (await publishReview(page, "TestUser", CLIENT_KEY)).reviewId;
 }
 
 async function openReviews(page: import("@playwright/test").Page): Promise<void> {
@@ -61,9 +61,9 @@ test("title form, published review list, quote link (same page), and Discard ask
   await page.getByTestId("review-title").fill("My review");
   await page.getByTestId("review-save").click();
   await expect
-    .poll(() => page.evaluate(async () => (await docmd.call("threads:whoami", { author: "TestUser", authorKey: "TestUser" })).journal.review.title))
+    .poll(() => page.evaluate(async (authorKey) => (await docmd.call("threads:whoami", { author: "TestUser", authorKey })).journal.review.title, CLIENT_KEY))
     .toBe("My review");
-  const reviewId = (await publishReview(page)).reviewId;
+  const reviewId = (await publishReview(page, "TestUser", CLIENT_KEY)).reviewId;
   await page.reload();
   await openReviews(page);
 

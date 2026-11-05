@@ -11,6 +11,20 @@ import { expect, type Page } from "@playwright/test";
 import { DOCS_DIR, PAGES } from "./playground.ts";
 
 /**
+ * The key the client writes drafts under for the author "TestUser" (a slug of the name). Only for specs that seed
+ * through docmd.call before the client has stored a key; specs that draft through the UI read it with clientKey().
+ * The client asks `whoami` under another key until it stores this one (the author name), see docmd-2mg.
+ */
+export const CLIENT_KEY = "testuser";
+
+/** The author key the client stored after a UI action (it derives it when the first comment is made). */
+export async function clientKey(page: Page): Promise<string> {
+  const key = await page.evaluate(() => localStorage.getItem("threads_author_key"));
+  if (!key) throw new Error("e2e: the client has not stored an author key yet (draft through the UI first)");
+  return key;
+}
+
+/**
  * Restore the playground markdown to the pages global-setup snapshotted, removing any
  * dynamically-added threads/highlights from test runs, and wait until the dev server serves them clean.
  */
@@ -18,9 +32,11 @@ export async function cleanThreads(page: Page): Promise<void> {
   const snapshot = process.env["THREADS_E2E_SNAPSHOT"];
   if (!snapshot) throw new Error("e2e: THREADS_E2E_SNAPSHOT is unset (global-setup did not run)");
   // Drafts live in the journal, not the markdown: an unpublished op would ride into the next test's publish.
-  fs.rmSync(path.join(DOCS_DIR, ".threads", "drafts", "TestUser.json"), { force: true });
+  // Every author's drafts (the specs also draft as other authors), not just the two keys of "TestUser".
+  fs.rmSync(path.join(DOCS_DIR, ".threads", "drafts"), { recursive: true, force: true });
   for (const { file, route } of PAGES) {
-    const served = async () => (await (await page.request.get(route)).text()).includes('<mark class="threads-highlight"');
+    // Clean means no thread markup at all: unanchored threads render cards without any highlight.
+    const served = async () => /data-thread-id|threads-thread/.test(await (await page.request.get(route)).text());
     fs.copyFileSync(path.join(snapshot, file), path.join(DOCS_DIR, file));
     await expect.poll(served, { message: `dev server rebuild of ${route} after restoring it`, timeout: 5_000 }).toBe(false);
   }
@@ -45,9 +61,9 @@ const servedHtml = (page: Page): Promise<string> =>
  * Publishing writes the markdown and the dev server rebuilds asynchronously, so this resolves once the
  * served page differs from before the publish: a reload right after would otherwise race the rebuild.
  */
-export async function publishReview(page: Page, author = "TestUser"): Promise<{ reviewId: string }> {
+export async function publishReview(page: Page, author = "TestUser", authorKey = author): Promise<{ reviewId: string }> {
   const before = await servedHtml(page);
-  const result = await page.evaluate((a) => docmd.call("threads:publish-review", { author: a }), author);
+  const result = await page.evaluate(([a, k]) => docmd.call("threads:publish-review", { author: a, authorKey: k }), [author, authorKey] as const);
   await expect.poll(() => servedHtml(page), { message: "dev server rebuild after publish", timeout: 5_000 }).not.toBe(before);
   return result;
 }
@@ -171,12 +187,11 @@ export async function seedThread(
 
 /**
  * Reload the page and wait for the threads-app element to re-attach.
- * After seeding/cleaning threads via WebSocket actions, the markdown file
- * on disk has changed. Give the dev server a moment to detect the change,
- * then reload.
+ * Callers that changed the markdown must first wait for the dev server to serve it (cleanThreads and
+ * publishReview poll the served page; a raw threads:publish-review call does not), so no fixed delay is
+ * needed before reloading.
  */
 export async function waitForReload(page: Page): Promise<void> {
-  await page.waitForTimeout(2000);
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector("threads-app", { state: "attached", timeout: 10_000 });
 }
@@ -214,10 +229,7 @@ export async function seedAndReload(
  * Set the author identity in localStorage.
  */
 export async function setAuthor(page: Page, name: string): Promise<void> {
-  await page.evaluate(
-    (authorName) => localStorage.setItem("threads_author", authorName),
-    name,
-  );
+  await page.evaluate((authorName) => localStorage.setItem("threads_author", authorName), name);
 }
 
 /**
