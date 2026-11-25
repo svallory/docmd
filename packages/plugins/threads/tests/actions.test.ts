@@ -11,7 +11,7 @@
  *    markup", "add-thread anchor does not match text inside the
  *    threads block", "delete-thread removes the highlight markup"   → moved to publish: tests/reviews.test.ts, "applyOps places marks…" and "applyOps removes…"
  *  - input validation, threads/<code> prefixes                      → kept
- *  - plugin surface                                                 → kept, plus the fourteen action names
+ *  - plugin surface                                                 → kept, plus the sixteen action names
  */
 import { test, mock, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -271,13 +271,14 @@ test('serve without a trusted identity refuses every write, with or without auth
   const REFUSED: Array<[string, Record<string, unknown>]> = [
     ...MUTATIONS,
     ['threads:set-mode', { mode: 'collect' }],
+    ['threads:update-review', { title: 'x' }],
     ['threads:publish-review', {}],
     ['threads:discard-review', { reviewId: 'r-none' }],
     ['threads:upsert-author', { authorKey: 'zed', name: 'Zed' }],
   ];
   const tree = snapshotTree(docsRoot);
   for (const [name, payload] of REFUSED) {
-    const bare = name === 'threads:set-mode' || name === 'threads:discard-review' ? {} : payload; // no mode, no reviewId: the identity is still checked first
+    const bare = name === 'threads:set-mode' || name === 'threads:update-review' || name === 'threads:discard-review' ? {} : payload; // no mode, no reviewId: the identity is still checked first
     for (const sent of [as(ALICE, payload), { file: project.file, ...bare }]) {
       await assert.rejects(
         call(name, sent, { mode: 'serve', caller: { identity: null } }),
@@ -473,9 +474,9 @@ test('plugin surface: descriptor, hooks and action names', () => {
   assert.equal(typeof plugin.actions, 'object');
   assert.deepEqual(Object.keys(plugin.actions).sort(), [
     'threads:add-comment', 'threads:add-thread', 'threads:delete-comment', 'threads:delete-thread',
-    'threads:discard-review', 'threads:edit-comment', 'threads:get-authors', 'threads:get-threads', 'threads:publish-review',
-    'threads:resolve-thread', 'threads:set-mode',
-    'threads:toggle-reaction', 'threads:upsert-author', 'threads:whoami',
+    'threads:discard-review', 'threads:edit-comment', 'threads:get-authors', 'threads:get-threads', 'threads:list-reviews',
+    'threads:publish-review', 'threads:resolve-thread', 'threads:set-mode',
+    'threads:toggle-reaction', 'threads:update-review', 'threads:upsert-author', 'threads:whoami',
   ]);
   const assets = plugin.getAssets();
   const scripts = plugin.generateScripts({ src: path.join(project.root, 'docs') }, { sidebar: true });
