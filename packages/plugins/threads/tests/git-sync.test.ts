@@ -42,7 +42,8 @@ beforeEach(() => trio.reset());
 
 /** Context for the server clone: serve mode with a trusted identity, git on (the remote may be replaced). */
 const ctxIn = (root: string, identity: string, git: unknown, mode: 'serve' | 'dev' = 'serve'): ActionContext =>
-  makeCtx(root, { mode, config: { src: 'docs', plugins: { threads: git ? { git } : {} } }, caller: { identity } }) as unknown as ActionContext;
+  // One identity drafts in most cases here, in a real minute: raise the per-minute rate so they share a window safely.
+  makeCtx(root, { mode, config: { src: 'docs', plugins: { threads: { ...(git ? { git } : {}), limits: { commentsPerMinute: 1000 } } } }, caller: { identity } }) as unknown as ActionContext;
 const gitCtx = (remote?: string) => ctxIn(trio.server, 'ann@example.com', remote ? { ...GIT, remote } : GIT);
 const draft = (ctx: ActionContext, body: string, file = 'docs/index.md') =>
   actions['threads:add-thread']({ file, body, anchor: ANCHOR }, ctx);
